@@ -96,6 +96,8 @@ pub struct FetchConfig {
     pub max_bytes: usize,
     pub timeout_secs: u64,
     pub max_redirects: usize,
+    /// Respektuj robots.txt (domyślnie tak).
+    pub respect_robots: bool,
 }
 
 impl Default for FetchConfig {
@@ -107,6 +109,7 @@ impl Default for FetchConfig {
             max_bytes: 2 * 1024 * 1024,
             timeout_secs: 20,
             max_redirects: 5,
+            respect_robots: true,
         }
     }
 }
@@ -262,6 +265,9 @@ impl Config {
                 self.fetch.timeout_secs = secs;
             }
         }
+        if let Ok(v) = std::env::var("BALD_RESPECT_ROBOTS") {
+            self.fetch.respect_robots = parse_bool(&v).unwrap_or(self.fetch.respect_robots);
+        }
         if let Ok(v) = std::env::var("BALD_TOR") {
             self.transport.tor = parse_bool(&v).unwrap_or(self.transport.tor);
         }
@@ -387,6 +393,7 @@ cache_ttl_secs = 3600
 max_bytes = 2097152          # 2 MiB na odpowiedź
 timeout_secs = 20
 max_redirects = 5
+respect_robots = true
 
 [security]
 action_gate = "none"         # none | seed-core (feature "seed-gate", faza 3)

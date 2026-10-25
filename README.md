@@ -11,7 +11,7 @@ lecz suwerenny **rejestr dowodowy (evidence ledger)**: dokument + tier źródła
 
 > „Temat tak, osoba nie.”
 
-## Status: faza 0
+## Status: faza 1 (rdzeń; UI w fazie 2)
 
 Działa:
 
@@ -20,15 +20,21 @@ Działa:
 - **Audit trail** — hash chain SHA-256, weryfikacja `bald audit verify`, bez surowych PII.
 - **Citation gate** — exact/normalized + próg Jaccard ≥ 0,92; `bald citation check`.
 - **Providerzy**: SearXNG (JSON), Brave Web Search, Demo (offline).
+- **Fetch**: `bse-fetch` z polityką SSRF, walidacją każdego redirectu, limitami, robots.txt, cache i
+  heurystyczną ekstrakcją HTML (bez JavaScriptu).
+- **Indeks**: Tantivy/BM25, `bald index add/search/stats`, upsert po SHA-256 kanonicznego URL.
 - **Store**: SQLite + migracje, runy, dokumenty, dedupe po kanonicznym URL.
-- **Fuzja**: RRF (k=60) + kanonizacja URL + usuwanie parametrów śledzących.
+- **Fuzja**: RRF (k=60) + kanonizacja URL + usuwanie parametrów śledzących + near-duplicate
+  (MinHash/LSH) + metryka różnorodności domen.
 - **Tauri shell**: statyczny UI w `apps/desktop` (wymaga WebKitGTK; patrz README).
 
 Zapytania `Allow` są zapisywane lokalnie w SQLite (surowy tekst + hash) na potrzeby
 historii; zapytania `Refuse/Review` nie są zapisywane, tylko hashowane w audit logu.
+Cache i indeks są lokalne, z uprawnieniami `0700/0600` na Unixie.
 
 Jeszcze nie ma: LLM/ekstrakcji twierdzeń, walidacji cytowań w UI, grafu narracji,
-diffów archiwum, Leptosa w Tauri, własnego crawlera, Tor/onion.
+diffów archiwum, Leptosa podłączonego do backendu, własnego crawlera, harmonogramu
+odświeżania, renderowania JavaScript (Playwright/render API) i Tor/onion.
 
 ## Szybki start
 
@@ -41,7 +47,17 @@ cargo run -p bse-cli -- citation check --claim "Aktualizacje są cichym balonem"
   --quote "Raport nie znalazł dowodów" --source-file raport.txt
 cargo run -p bse-cli -- audit verify
 cargo run -p bse-cli -- providers list
+
+# fetch + lokalny indeks (respektuje robots.txt)
+cargo run -p bse-cli -- fetch https://example.com
+cargo run -p bse-cli -- index add https://example.com
+cargo run -p bse-cli -- index search "documentation examples"
+cargo run -p bse-cli -- index stats
 ```
+
+`fetch` i `index add` zapisują wyekstrahowany dokument do cache; kolejne wywołanie
+z tym samym URL-em korzysta z cache do `fetch.cache_ttl_secs`. `index add` indeksuje
+tylko strony dozwolone przez robots.txt i bez `meta robots=noindex`.
 
 Konfiguracja:
 
@@ -49,6 +65,25 @@ Konfiguracja:
 cargo run -p bse-cli -- config init
 cargo run -p bse-cli -- config path
 ```
+
+Ścieżki i limity fetchu są w `config.toml`:
+
+```toml
+[storage]
+path = "~/.local/share/bald/bald.db"
+index_path = "~/.local/share/bald/index"
+
+[fetch]
+cache_dir = "~/.local/share/bald/cache"
+cache_ttl_secs = 3600
+max_bytes = 2097152
+timeout_secs = 20
+max_redirects = 5
+respect_robots = true
+```
+
+Nadpisania: `BALD_INDEX_PATH`, `BALD_CACHE_DIR`, `BALD_FETCH_TIMEOUT_SECS`,
+`BALD_RESPECT_ROBOTS`.
 
 Domyślnie nic nie jest włączone poza `--demo`. Aby użyć SearXNG:
 
@@ -78,11 +113,13 @@ crates/
   bse-guard/      RulesGate, CitationGate, AuditLog (hash chain)
   bse-store/      SQLite (rusqlite), migracje, runy, dokumenty
   bse-providers/  SearXNG, Brave, Demo
-  bse-pipeline/   guard → fan-out → dedupe → RRF → store
+  bse-fetch/      HTTP+SSRF, robots.txt, cache, ekstrakcja treści
+  bse-index/      Tantivy/BM25, upsert, lokalne wyszukiwanie
+  bse-pipeline/   guard → fan-out → kanonizacja → RRF → near-dedupe → store
   bse-cli/        binarka `bald`
 apps/desktop/     Tauri 2 shell (poza workspace, wymaga WebKitGTK)
-docs/adr/         ADR-005 (guard, cytowania, audit, seed-core)
-PLAN.md           pełny plan architektury (v0.4, stan fazy 0)
+docs/adr/         ADR-005 (guard/audit), ADR-006 (fetch/indeks)
+PLAN.md           pełny plan architektury (v0.5, stan faz 0–1)
 ```
 
 `seed-core/` i `jfp-edge-radar/` w katalogu projektu to **niezależne repo JFP**,
@@ -94,12 +131,20 @@ celowo poza workspace. Rdzeń BALD jest MIT i nie linkuje żadnego z nich.
   Postgresa w trybie `server`.
 - **rusqlite, nie sqlx** — świadome odstępstwo od PLAN.md na fazę 0: mniej zależności,
   prostszy build, zapytania są krótkie. Wymiana za traitem, bez zmian w pipeline.
-- **Tantivy dopiero w fazie 1** — teraz ranking RRF na świeżych wynikach.
+- **Tantivy od fazy 1** — BM25 na lokalnym indeksie, obok RRF na świeżych wynikach.
+  Pełna treść jest indeksowana, ale nie przechowywana; w indeksie zostaje excerpt.
+- **SSRF i robots w `bse-fetch`, nie w providerach** — walidacja URL, DNS i każdego
+  redirectu; tylko HTTP/HTTPS na portach 80/443; bez proxy i bez credentiali.
+  `robots.txt` jest sprawdzany per origin, a 5xx/awaria robots oznacza fail-closed.
+- **Cache to wyekstrahowany dokument, nie surowy HTML** — mniejsza powierzchnia
+  przechowywania treści i brak przypadkowego wykonywania skryptów; TTL domyślnie 1 h.
+- **Near-duplicate na snippetach** — MinHash/LSH (64 hashe, 16 pasm, próg 0,90)
+  scala mirrory i kopie, ale nie krótkie snippety (< 8 tokenów).
 - **seed-core tylko jako action gate (faza 3)** — nie klasyfikator zapytań i nie
   walidator cytowań; szczegóły i mapowanie `etm`/`lid` w `docs/adr/ADR-005-bse-guard.md`.
 - **jfp-edge-radar tylko ingress w daemonie** — nie egress SSRF; SSRF należy do
   `bse-fetch` (faza 1).
-- **Tor/onion w v1.1** — poza fazą 0.
+- **Tor/onion w v1.1** — poza fazą 0/1; wejdzie jako opcjonalny transport SOCKS5.
 
 ## Guard: co blokuje
 
@@ -120,14 +165,28 @@ cargo test
 ```
 
 Zestaw obejmuje: 40 zapytań person-targeted i 40 benign (PL/EN/obfuskacja), walidację cytatów,
-tamper-detection audit logu, kanonizację URL, RRF/dedupe, SQLite, parsery providerów
-oraz end-to-end demo przez pipeline.
+tamper-detection audit logu, kanonizację URL, RRF/dedupe, near-duplicate MinHash/LSH,
+politykę SSRF, robots.txt, cache/TTL i uprawnienia plików, ekstrakcję HTML, SQLite,
+Tantivy upsert/search, parsery providerów oraz end-to-end demo przez pipeline.
+
+## Ograniczenia fazy 1
+
+- **Brak JavaScriptu** — strony renderowane po stronie klienta mogą dać pusty tekst;
+  render API/Playwright jest opcjonalny w kolejnej fazie.
+- **Brak własnego crawlera i kolejki** — `index add` pobiera jeden URL na raz.
+- **Brak harmonogramu świeżości** — cache TTL i ręczne `index add`.
+- **Brak pomiaru p95 na żywym SearXNG/Brave** — mierzymy lokalny indeks i logujemy
+  `latency_ms`; powtarzalny benchmark providerów wymaga stabilnego środowiska.
+- **UI nadal statyczne** — nie jest podłączone do backendu Rust/Leptosa.
+- **Brak HNSW/embeddingów** — w fazie 1 tylko BM25; semantyka w fazie 2+.
 
 ## Dokumentacja
 
 - [`PLAN.md`](PLAN.md) — architektura, model domenowy, roadmapa, decyzje D1–D16.
 - [`docs/adr/ADR-005-bse-guard.md`](docs/adr/ADR-005-bse-guard.md) — kontrakt bramek,
   audit chain, adapter seed-core, izolacja licencyjna.
+- [`docs/adr/ADR-006-fetch-index.md`](docs/adr/ADR-006-fetch-index.md) — granice fetch/indeks,
+  SSRF, robots.txt, cache, ekstrakcja, BM25 i near-duplicate.
 
 ## Licencja
 

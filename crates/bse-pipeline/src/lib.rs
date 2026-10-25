@@ -550,10 +550,11 @@ mod tests {
             raw("brave", 1, "https://www.example.org/a", "A brave"),
             raw("brave", 2, "https://example.org/c", "C"),
         ]);
-        let hits = fuse(&[a, b], 10);
+        let c = ProviderOutcomeView::new(vec![raw("demo", 1, "https://example.org/a/", "A demo")]);
+        let hits = fuse(&[a, b, c], 10);
         assert_eq!(hits.len(), 3);
         assert_eq!(hits[0].canonical_url, "https://example.org/a");
-        assert_eq!(hits[0].providers.len(), 2);
+        assert_eq!(hits[0].providers.len(), 3);
         assert!(hits[0].score > hits[1].score);
     }
 

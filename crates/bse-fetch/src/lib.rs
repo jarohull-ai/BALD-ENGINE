@@ -4,6 +4,7 @@
 //! - tylko `http`/`https`, tylko porty 80/443, bez danych w URL;
 //! - DNS jest filtrowany **w resolverze** (ochrona przed rebindingiem),
 //!   a każdy redirect jest ponownie walidowany;
+//! - `robots.txt` jest sprawdzany per origin; 5xx/awaria = fail-closed;
 //! - twardy limit rozmiaru i typu treści;
 //! - brak proxy środowiskowego (świadomy, bezpośredni fetch);
 //! - ekstrakcja tekstu jest heurystyczna i nie wykonuje JavaScriptu.
@@ -12,7 +13,8 @@ mod cache;
 mod extract;
 mod ssrf;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
@@ -20,6 +22,7 @@ use encoding_rs::{Encoding, UTF_8};
 use reqwest::header::CONTENT_TYPE;
 use reqwest::redirect::Policy;
 use reqwest::Url;
+use robotstxt::DefaultMatcher;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -62,6 +65,8 @@ pub struct FetchOptions {
     pub max_redirects: usize,
     pub timeout: Duration,
     pub user_agent: String,
+    /// Jeśli `true`, przed pobraniem sprawdzany jest `/robots.txt` danej origin.
+    pub respect_robots: bool,
 }
 
 impl Default for FetchOptions {
@@ -71,6 +76,7 @@ impl Default for FetchOptions {
             max_redirects: DEFAULT_MAX_REDIRECTS,
             timeout: DEFAULT_TIMEOUT,
             user_agent: "BALD/0.1 (research; +https://github.com/jarohull-ai/bald)".to_string(),
+            respect_robots: true,
         }
     }
 }
@@ -103,6 +109,12 @@ pub enum FetchError {
 
     #[error("cannot decode or extract document: {0}")]
     Extract(String),
+
+    #[error("robots.txt disallows this URL for BALD")]
+    RobotsDisallowed,
+
+    #[error("robots.txt could not be evaluated: {0}")]
+    RobotsUnavailable(String),
 }
 
 impl FetchError {
@@ -118,6 +130,8 @@ impl FetchError {
             FetchError::TooManyRedirects(_) => "too_many_redirects",
             FetchError::RedirectWithoutLocation => "redirect_without_location",
             FetchError::Extract(_) => "extract",
+            FetchError::RobotsDisallowed => "robots_disallowed",
+            FetchError::RobotsUnavailable(_) => "robots_unavailable",
         }
     }
 }
@@ -127,6 +141,8 @@ pub struct Fetcher {
     policy: SsrfPolicy,
     options: FetchOptions,
     cache: Option<FetchCache>,
+    /// origin → treść robots.txt; `None` = brak/4xx (dostęp dozwolony).
+    robots: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl Fetcher {
@@ -147,6 +163,7 @@ impl Fetcher {
             policy,
             options,
             cache: None,
+            robots: Mutex::new(HashMap::new()),
         })
     }
 
@@ -156,7 +173,9 @@ impl Fetcher {
     }
 
     pub async fn fetch(&self, raw_url: &str) -> Result<FetchedDocument, FetchError> {
-        let url = Url::parse(raw_url.trim()).map_err(|e| FetchError::InvalidUrl(e.to_string()))?;
+        let mut url =
+            Url::parse(raw_url.trim()).map_err(|e| FetchError::InvalidUrl(e.to_string()))?;
+        url.set_fragment(None);
         self.policy.validate_syntax(&url)?;
 
         // Cache działa też offline: pełny DNS jest potrzebny dopiero przed siecią.
@@ -167,11 +186,8 @@ impl Fetcher {
             }
         }
 
-        self.policy.validate_url(&url).await?;
-        let (final_url, status, content_type, bytes) = self.fetch_bytes(url.clone()).await?;
-        let charset = charset_from_content_type(&content_type);
-        let (body, _, _) = charset.decode(&bytes);
-        let decoded = body.into_owned();
+        let (final_url, status, content_type, bytes) = self.fetch_bytes(url.clone(), true).await?;
+        let decoded = decode_text(&bytes, &content_type);
 
         let final_host = final_url.host_str().unwrap_or_default().to_string();
         let extracted = if is_html(&content_type) {
@@ -184,6 +200,10 @@ impl Fetcher {
             .canonical
             .as_deref()
             .and_then(|raw| Url::parse(raw).ok())
+            .map(|mut candidate| {
+                candidate.set_fragment(None);
+                candidate
+            })
             .filter(|candidate| {
                 candidate.host_str() == Some(final_host.as_str())
                     && self.policy.validate_syntax(candidate).is_ok()
@@ -218,11 +238,18 @@ impl Fetcher {
         Ok(doc)
     }
 
-    async fn fetch_bytes(&self, mut url: Url) -> Result<(Url, u16, String, Vec<u8>), FetchError> {
+    async fn fetch_bytes(
+        &self,
+        mut url: Url,
+        check_robots: bool,
+    ) -> Result<(Url, u16, String, Vec<u8>), FetchError> {
         let mut redirects = 0usize;
 
         loop {
             self.policy.validate_url(&url).await?;
+            if check_robots {
+                self.ensure_robots_allowed(&url).await?;
+            }
             let response = self.client.get(url.clone()).send().await?;
             let status = response.status();
 
@@ -238,8 +265,8 @@ impl Fetcher {
                 let next = url
                     .join(location)
                     .map_err(|e| FetchError::InvalidUrl(e.to_string()))?;
-                self.policy.validate_url(&next).await?;
                 url = next;
+                url.set_fragment(None);
                 redirects += 1;
                 continue;
             }
@@ -281,6 +308,118 @@ impl Fetcher {
             return Ok((url, status.as_u16(), content_type, body));
         }
     }
+
+    async fn ensure_robots_allowed(&self, url: &Url) -> Result<(), FetchError> {
+        if !self.options.respect_robots {
+            return Ok(());
+        }
+
+        let origin = origin_key(url);
+        let cached = {
+            let guard = self
+                .robots
+                .lock()
+                .map_err(|_| FetchError::RobotsUnavailable("cache lock poisoned".to_string()))?;
+            guard.get(&origin).cloned()
+        };
+
+        let body = match cached {
+            Some(body) => body,
+            None => {
+                let body = self.fetch_robots_body(url).await?;
+                let mut guard = self.robots.lock().map_err(|_| {
+                    FetchError::RobotsUnavailable("cache lock poisoned".to_string())
+                })?;
+                guard.insert(origin, body.clone());
+                body
+            }
+        };
+
+        if let Some(body) = body {
+            if !robots_allows(&body, url) {
+                return Err(FetchError::RobotsDisallowed);
+            }
+        }
+        Ok(())
+    }
+
+    async fn fetch_robots_body(&self, url: &Url) -> Result<Option<String>, FetchError> {
+        let mut robots = url.clone();
+        robots.set_path("/robots.txt");
+        robots.set_query(None);
+        robots.set_fragment(None);
+
+        match Box::pin(self.fetch_bytes(robots, false)).await {
+            Ok((_, _, content_type, bytes)) => Ok(Some(decode_text(&bytes, &content_type))),
+            // RFC 9309: 4xx oznacza „brak reguł”, czyli brak ograniczeń.
+            Err(FetchError::Status(code)) if (400..500).contains(&code) => Ok(None),
+            Err(FetchError::UnsupportedContentType(_)) => Ok(None),
+            Err(FetchError::TooLarge { .. }) => Err(FetchError::RobotsUnavailable(
+                "robots.txt too large".to_string(),
+            )),
+            Err(error) => Err(FetchError::RobotsUnavailable(format!(
+                "{}: {error}",
+                error.kind()
+            ))),
+        }
+    }
+}
+
+fn robots_allows(body: &str, url: &Url) -> bool {
+    let mut matcher = DefaultMatcher::default();
+    matcher.one_agent_allowed_by_robots(body, "BALD", url.as_str())
+}
+
+fn origin_key(url: &Url) -> String {
+    let mut origin = url.clone();
+    origin.set_path("/");
+    origin.set_query(None);
+    origin.set_fragment(None);
+    origin.to_string()
+}
+
+fn decode_text(bytes: &[u8], content_type: &str) -> String {
+    let encoding = charset_from_content_type(content_type)
+        .or_else(|| {
+            if is_html(content_type) {
+                sniff_meta_charset(bytes)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(UTF_8);
+    let (body, _, _) = encoding.decode(bytes);
+    body.into_owned()
+}
+
+fn charset_from_content_type(content_type: &str) -> Option<&'static Encoding> {
+    content_type.split(';').find_map(|part| {
+        let part = part.trim();
+        let (key, value) = part.split_once('=')?;
+        if key.trim().eq_ignore_ascii_case("charset") {
+            let label = value.trim().trim_matches('"').as_bytes();
+            Encoding::for_label(label)
+        } else {
+            None
+        }
+    })
+}
+
+/// Stare strony PL/EN często deklarują charset wyłącznie w `<meta>`.
+fn sniff_meta_charset(bytes: &[u8]) -> Option<&'static Encoding> {
+    let head = &bytes[..bytes.len().min(4096)];
+    let text = String::from_utf8_lossy(head).to_ascii_lowercase();
+    let start = text.find("charset=")? + "charset=".len();
+    let label: String = text[start..]
+        .trim_start_matches(['"', '\'', ' '])
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .collect();
+    if label.is_empty() {
+        None
+    } else {
+        Encoding::for_label(label.as_bytes())
+    }
 }
 
 fn is_html(content_type: &str) -> bool {
@@ -306,22 +445,6 @@ fn is_supported(content_type: &str) -> bool {
     )
 }
 
-fn charset_from_content_type(content_type: &str) -> &'static Encoding {
-    content_type
-        .split(';')
-        .find_map(|part| {
-            let part = part.trim();
-            let (key, value) = part.split_once('=')?;
-            if key.trim().eq_ignore_ascii_case("charset") {
-                let label = value.trim().trim_matches('"').as_bytes();
-                Encoding::for_label(label)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(UTF_8)
-}
-
 fn sha256_prefixed(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
@@ -336,9 +459,19 @@ mod tests {
     fn parses_charset() {
         assert_eq!(
             charset_from_content_type("text/html; charset=iso-8859-2"),
-            encoding_rs::ISO_8859_2
+            Some(encoding_rs::ISO_8859_2)
         );
-        assert_eq!(charset_from_content_type("text/plain"), encoding_rs::UTF_8);
+        assert_eq!(charset_from_content_type("text/plain"), None);
+        assert_eq!(
+            sniff_meta_charset(br#"<meta charset="windows-1250">"#),
+            Some(encoding_rs::WINDOWS_1250)
+        );
+        assert_eq!(
+            sniff_meta_charset(
+                br#"<meta http-equiv="content-type" content="text/html; charset=iso-8859-2">"#
+            ),
+            Some(encoding_rs::ISO_8859_2)
+        );
     }
 
     #[test]
@@ -347,5 +480,40 @@ mod tests {
         assert!(is_supported("text/plain"));
         assert!(!is_supported("application/pdf"));
         assert!(!is_supported("image/png"));
+    }
+
+    #[test]
+    fn robots_disallow_and_allow_rules() {
+        let body = "User-agent: *\nDisallow: /private\nAllow: /private/public\n";
+        assert!(robots_allows(
+            body,
+            &Url::parse("https://example.com/index").unwrap()
+        ));
+        assert!(!robots_allows(
+            body,
+            &Url::parse("https://example.com/private/secret").unwrap()
+        ));
+        assert!(robots_allows(
+            body,
+            &Url::parse("https://example.com/private/public/page").unwrap()
+        ));
+    }
+
+    #[test]
+    fn robots_specific_agent_wins_over_wildcard() {
+        let body = "User-agent: *\nAllow: /\n\nUser-agent: BALD\nDisallow: /\n";
+        assert!(!robots_allows(
+            body,
+            &Url::parse("https://example.com/").unwrap()
+        ));
+    }
+
+    #[test]
+    fn empty_robots_allows_everything() {
+        assert!(robots_allows(
+            "",
+            &Url::parse("https://example.com/anything").unwrap()
+        ));
+        assert!(FetchOptions::default().respect_robots);
     }
 }

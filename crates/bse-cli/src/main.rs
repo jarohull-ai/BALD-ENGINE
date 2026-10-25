@@ -578,6 +578,7 @@ fn build_fetcher(cfg: &Config, no_cache: bool) -> Result<Fetcher> {
         max_bytes: cfg.fetch.max_bytes.max(1),
         max_redirects: cfg.fetch.max_redirects,
         timeout: Duration::from_secs(cfg.fetch.timeout_secs.max(1)),
+        respect_robots: cfg.fetch.respect_robots,
         ..FetchOptions::default()
     };
     let fetcher = Fetcher::new(options).context("cannot build HTTP fetcher")?;
@@ -867,7 +868,7 @@ fn index_search(query: String, limit: usize, json: bool) -> Result<ExitCode> {
     let started = Instant::now();
     let index = open_index(&cfg)?;
     let hits = index
-        .search(&query, limit.max(1))
+        .search(&query, limit.clamp(1, 500))
         .context("index search failed")?;
     let latency_ms = started.elapsed().as_millis() as u64;
 

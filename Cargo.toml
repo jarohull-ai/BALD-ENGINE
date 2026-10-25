@@ -31,6 +31,7 @@ hex = "0.4"
 ipnet = "2"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "stream", "gzip", "brotli", "deflate"] }
+robotstxt = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 scraper = "0.29"
 serde = { version = "1", features = ["derive"] }

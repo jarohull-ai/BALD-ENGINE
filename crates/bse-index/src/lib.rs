@@ -121,6 +121,14 @@ pub struct IndexStats {
     pub documents: u64,
 }
 
+/// Granica backendu indeksu. Dziś Tantivy, w przyszłości np. zdalny klaster.
+pub trait SearchIndex: Send + Sync {
+    fn add(&self, document: &IndexDocument) -> Result<(), IndexError>;
+    fn add_many(&self, documents: &[IndexDocument]) -> Result<(), IndexError>;
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<IndexedHit>, IndexError>;
+    fn stats(&self) -> Result<IndexStats, IndexError>;
+}
+
 struct Fields {
     id: Field,
     canonical_url: Field,
@@ -259,6 +267,24 @@ impl DocumentIndex {
         doc.add_text(self.fields.content_hash, &document.content_hash);
         doc.add_text(self.fields.html_hash, &document.html_hash);
         doc
+    }
+}
+
+impl SearchIndex for DocumentIndex {
+    fn add(&self, document: &IndexDocument) -> Result<(), IndexError> {
+        DocumentIndex::add(self, document)
+    }
+
+    fn add_many(&self, documents: &[IndexDocument]) -> Result<(), IndexError> {
+        DocumentIndex::add_many(self, documents)
+    }
+
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<IndexedHit>, IndexError> {
+        DocumentIndex::search(self, query, limit)
+    }
+
+    fn stats(&self) -> Result<IndexStats, IndexError> {
+        DocumentIndex::stats(self)
     }
 }
 
@@ -442,5 +468,30 @@ mod tests {
             document_id("https://example.com/a"),
             document_id("https://example.com/b")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let index = DocumentIndex::open(dir.path()).unwrap();
+        index
+            .add(&doc(
+                "https://example.com/a",
+                "Dokument",
+                "Treść dokumentu do testu uprawnień.",
+            ))
+            .unwrap();
+
+        let dir_mode = fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        for entry in fs::read_dir(dir.path()).unwrap().flatten() {
+            if entry.file_type().unwrap().is_file() {
+                let mode = entry.metadata().unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "{} is not 0600", entry.path().display());
+            }
+        }
     }
 }

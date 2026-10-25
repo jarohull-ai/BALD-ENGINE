@@ -12,6 +12,7 @@ encoding_rs.workspace = true
 hex.workspace = true
 ipnet.workspace = true
 reqwest.workspace = true
+robotstxt.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true

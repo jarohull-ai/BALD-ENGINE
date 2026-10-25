@@ -30,6 +30,7 @@ impl FetchCache {
     pub fn new(dir: impl AsRef<Path>, ttl: Duration) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
+        set_private_dir(&dir)?;
         Ok(Self { dir, ttl })
     }
 
@@ -55,7 +56,7 @@ impl FetchCache {
         };
         let bytes = serde_json::to_vec(&entry).map_err(io::Error::other)?;
         let path = self.path(url);
-        let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+        let tmp = path.with_extension(format!("tmp-{}-{}", std::process::id(), now_nanos()));
 
         fs::write(&tmp, bytes)?;
         set_private_permissions(&tmp)?;
@@ -81,6 +82,22 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn now_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+fn set_private_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 fn set_private_permissions(path: &Path) -> io::Result<()> {
@@ -144,7 +161,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn cache_file_is_private() {
+    fn cache_dir_and_file_are_private() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
@@ -152,7 +169,9 @@ mod tests {
         let url = Url::parse("https://example.com/").unwrap();
         cache.put(&url, &doc()).unwrap();
         let path = cache.path(&url);
-        let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        let file_mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir_mode = fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o600);
+        assert_eq!(dir_mode, 0o700);
     }
 }

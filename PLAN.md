@@ -1,9 +1,9 @@
 # BALD SEARCH ENGINE — plan architektury
 
-**Wersja:** 0.4 (plan + faza 0)
+**Wersja:** 0.5 (plan + fazy 0–1)
 **Data:** 2026-10-25
 **Stack:** Rust, desktop-first (Tauri), lokalny-first, chmura opcjonalna
-**Status:** faza 0 zrealizowana dla rdzenia i CLI; shell Tauri przygotowany, build wymaga
+**Status:** fazy 0–1 zrealizowane dla rdzenia i CLI; shell Tauri przygotowany, build wymaga
 WebKitGTK; szczegóły decyzji w §16, stan implementacji w §19a
 
 **Decyzje zamykające v0.1:** Tauri · Leptos · bez własnego crawlera w v1 · PL+EN ·
@@ -16,6 +16,11 @@ za feature flag (izolacja licencyjna).
 **Nowe w 0.4:** realizacja ADR-005 i fazy 0 — workspace Rust, `bse-guard` (40/40 testów
 person-targeted i benign), `bse-store` SQLite, providerzy SearXNG/Brave/Demo, CLI `bald`,
 audit hash chain oraz odłączony shell Tauri. Świadome odstępstwo: `rusqlite` zamiast `sqlx`.
+
+**Nowe w 0.5:** realizacja fazy 1 — `bse-fetch` (polityka SSRF, `robots.txt`, cache,
+ekstrakcja HTML/plain), `bse-index` (Tantivy/BM25, upsert), near-duplicate MinHash/LSH,
+metryka różnorodności domen, CLI `fetch`/`index`, ADR-006. MSRV podniesiony do 1.88
+(Tantivy 0.27).
 
 ---
 
@@ -1309,25 +1314,48 @@ bezpieczeństwa. Do tego licencje: seed-core non-commercial, edge-radar próg $1
 6. ~~**Faza 0**: szkielet workspace, `bse-store` z SQLite, CLI `search`, adaptery SearXNG + Brave,
    okno Tauri z jednym ekranem „Search (dev)”.~~ **Zrealizowane dla rdzenia/CLI**; shell Tauri
    jest gotowy, ale build wymaga WebKitGTK — patrz §19a.
+7. ~~**Faza 1**: `bse-fetch` z SSRF/robots/cache, `bse-index` z Tantivy, near-duplicate
+   MinHash/LSH, metryka różnorodności i komendy `fetch`/`index`.~~ **Zrealizowane dla rdzenia/CLI**;
+   render API i benchmark p95 na żywych providerach pozostają do fazy 2 — patrz §19a.
 
-Po fazie 0 wracamy do tego dokumentu z pierwszymi liczbami (latencja, koszt, jakość) i korygujemy
+Po fazach 0–1 wracamy do tego dokumentu z pierwszymi liczbami (latencja, koszt, jakość) i korygujemy
 roadmapę — plan bez pomiarów to hipoteza.
 
-### 19a. Stan fazy 0 (2026-10-25)
+### 19a. Stan faz 0–1 (2026-10-25)
 
 - **Workspace:** `bse-core`, `bse-config`, `bse-guard`, `bse-store`, `bse-providers`,
-  `bse-pipeline`, `bse-cli`; `seed-core` i `jfp-edge-radar` poza workspace.
+  `bse-fetch`, `bse-index`, `bse-pipeline`, `bse-cli`; `seed-core` i `jfp-edge-radar` poza
+  workspace. MSRV 1.88 (Tantivy 0.27).
 - **CLI `bald`:** `search`, `guard check`, `citation check`, `audit verify`, `providers list`,
-  `config init/path`; JSON, `--demo`, `--no-store`, `--lang`.
+  `fetch`, `index add/search/stats`, `config init/path`; JSON, `--demo`, `--no-store`,
+  `--lang`, `--no-cache`.
 - **Guard:** deterministyczne reguły PL/EN + leetspeak; 40 person-targeted → 0 `Allow`,
-  40 benign → 0 `Refuse`; `Review`/`Refuse` kończą CLI kodem 2.
+  40 benign → 0 `Refuse`; `Review`/`Refuse` kończą CLI kodem 2. Guard działa też na
+  `index search`.
 - **Audit:** SHA-256 JSONL hash chain, tamper detection, tylko hashe/kody; brak surowych PII.
+  `fetch` i `index` dopisują decyzje/refusal z hashem URL.
 - **Store:** SQLite (rusqlite), runy, dokumenty, dedupe po kanonicznym URL; zapisywane tylko `Allow`.
 - **Providerzy:** SearXNG JSON, Brave, Demo offline; fuzja RRF k=60.
+- **Fetch:** tylko HTTP/HTTPS na 80/443, bez credentiali i proxy; blokada loopback/private/
+  link-local/metadata; własny resolver DNS i rewalidacja każdego redirectu; 2 MiB, 20 s,
+  5 redirectów; allowlista HTML/XHTML/plain/Markdown; `robots.txt` per origin (fail-closed
+  przy 5xx), `noindex` pomijany przy indeksowaniu; cache wyekstrahowanych dokumentów
+  (SHA-256 URL, TTL 1 h, atomowy zapis, `0700/0600`).
+- **Ekstrakcja:** `article`/`main`/`body`, meta/OG, canonical (tylko ta sama domena),
+  `lang`, `published`, charset z nagłówka lub `<meta>`, normalizacja whitespace, limit 120k znaków.
+- **Indeks:** Tantivy 0.27, BM25, schema id/URL/title/body/excerpt/domain/published/lang/
+  fetched/hashe; upsert po SHA-256 kanonicznego URL; pełna treść indeksowana, przechowywany
+  tylko excerpt; katalog `0700`, pliki `0600`.
+- **Dedupe/„suwerenność”:** RRF → near-duplicate MinHash/LSH (64 hashe, 16 pasm, próg 0,90;
+  krótkie snippety < 8 tokenów bez scalania) → metryka znormalizowanej entropii domen;
+  ostrzeżenia `single-source`/`low-diversity`.
 - **Desktop:** odłączony crate Tauri 2 ze statycznym mockiem UI; build zablokowany do instalacji
   WebKitGTK (`apps/desktop/README.md`).
-- **Odstępstwa:** `rusqlite` zamiast `sqlx` (mniejszy dependency surface, `RunStore` trait na przyszłość);
-  Tantivy, Leptos i własny `bse-fetch`/SSRF pozostają w fazie 1.
+- **Odstępstwa/ograniczenia:** `rusqlite` zamiast `sqlx` (mniejszy dependency surface,
+  `RunStore` trait na przyszłość); brak JS-renderingu, crawlera i harmonogramu; brak pomiaru
+  p95 na żywych providerach; UI nie jest podłączone do backendu.
+- **ADR:** `ADR-005-bse-guard.md` (bramki/audit), `ADR-006-fetch-index.md` (SSRF/robots/cache/
+  Tantivy/dedupe).
 
 ---
 
@@ -1339,3 +1367,4 @@ roadmapę — plan bez pomiarów to hipoteza.
 | 0.2 | Tauri + Leptos, SQLite zamiast Postgresa, Tantivy, graf narracji, stance, klasyfikacja, custom provider, YaCy/Oxylabs, ewaluacja na datasetach, decyzje D1–D12 |
 | 0.3 | Transport Tor/onion (§3.5, D13), integracja seed-core i edge-radar z korektą zakresu (§3.6, D14–D16), `bse-guard`/`bse-transport`/`bse-gateway`, SSRF w `bse-fetch`, izolacja licencyjna JFP, roadmapa 8–9 tyg. |
 | 0.4 | Faza 0: workspace Rust, ADR-005, guard + citation gate + audit chain, SQLite, providerzy SearXNG/Brave/Demo, CLI `bald`, odłączony shell Tauri; `rusqlite` zamiast `sqlx`; stan w §19a. |
+| 0.5 | Faza 1: `bse-fetch` (SSRF+robots+cache+ekstrakcja), `bse-index` (Tantivy/BM25), near-duplicate MinHash/LSH, entropia domen, CLI `fetch`/`index add/search/stats`, ADR-006; MSRV 1.88; stan w §19a. |
