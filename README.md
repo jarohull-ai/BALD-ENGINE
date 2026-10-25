@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="VIPER STUDIO / BALD" width="180" />
+</p>
+
 # BALD
 
 Wyszukiwarka **twierdzeń, narracji i materiałów źródłowych** (ang. *Claim, Narrative & Source Evidence Engine*).

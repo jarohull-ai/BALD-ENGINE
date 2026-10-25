@@ -1,0 +1,18 @@
+[package]
+name = "bse-index"
+description = "BALD local full-text index (Tantivy/BM25) for fetched documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tantivy.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

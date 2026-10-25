@@ -1,4 +1,6 @@
-//! Orkiestracja zapytania: guard → fan-out → kanonizacja → RRF → store.
+//! Orkiestracja zapytania: guard → fan-out → kanonizacja → RRF → dedupe → store.
+
+mod dedupe;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -14,6 +16,8 @@ use bse_store::{RunHit, RunRecord, RunStore, StoreError};
 use serde_json::json;
 use thiserror::Error;
 use url::Url;
+
+use dedupe::near_dedupe;
 
 const RRF_K: f32 = 60.0;
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(12);
@@ -102,6 +106,9 @@ impl SearchEngine {
                 latency_ms: started.elapsed().as_millis() as u64,
                 warnings,
                 stored_run_id: None,
+                unique_domains: 0,
+                source_diversity: 0.0,
+                near_duplicates_removed: 0,
             });
         }
 
@@ -113,11 +120,20 @@ impl SearchEngine {
             .map(|o| ProviderOutcomeView::new(o.hits.clone()))
             .collect();
         let fuse_started = Instant::now();
-        let hits = fuse(&views, opts.limit.max(1));
+        let (hits, near_duplicates_removed) = fuse_with_stats(&views, opts.limit.max(1));
         let _fuse_ms = fuse_started.elapsed().as_millis();
 
         let provider_status: Vec<ProviderStatus> =
             outcomes.iter().map(|o| o.status.clone()).collect();
+
+        let (unique_domains, source_diversity) = diversity(&hits);
+        if hits.len() > 1 && unique_domains <= 1 {
+            warnings.push("single-source: wszystkie wyniki pochodzą z jednej domeny".to_string());
+        } else if hits.len() >= 3 && source_diversity < 0.6 {
+            warnings.push(format!(
+                "low-diversity: entropia domen {source_diversity:.2} < 0.60"
+            ));
+        }
 
         self.record_guard(&subject, &verdict, &mut warnings);
 
@@ -157,6 +173,9 @@ impl SearchEngine {
             latency_ms,
             warnings,
             stored_run_id,
+            unique_domains,
+            source_diversity,
+            near_duplicates_removed,
         })
     }
 
@@ -300,8 +319,13 @@ fn build_run_record(
     run
 }
 
-/// RRF (Reciprocal Rank Fusion) + dedupe po kanonicznym URL.
+/// RRF (Reciprocal Rank Fusion) + dedupe po kanonicznym URL i near-duplicate.
 pub fn fuse(outcomes: &[ProviderOutcomeView], limit: usize) -> Vec<RankedHit> {
+    fuse_with_stats(outcomes, limit).0
+}
+
+/// Jak `fuse`, ale zwraca też liczbę usuniętych near-duplikatów.
+pub fn fuse_with_stats(outcomes: &[ProviderOutcomeView], limit: usize) -> (Vec<RankedHit>, usize) {
     let mut merged: HashMap<String, RankedHit> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut seen_per_provider: HashSet<(String, String)> = HashSet::new();
@@ -365,8 +389,49 @@ pub fn fuse(outcomes: &[ProviderOutcomeView], limit: usize) -> Vec<RankedHit> {
             .then_with(|| a.best_rank.cmp(&b.best_rank))
             .then_with(|| a.title.cmp(&b.title))
     });
+
+    let near_duplicates_removed = near_dedupe(&mut hits);
     hits.truncate(limit);
-    hits
+    (hits, near_duplicates_removed)
+}
+
+/// Ile unikalnych domen i jaka jest znormalizowana entropia ich rozkładu.
+pub fn diversity(hits: &[RankedHit]) -> (usize, f32) {
+    if hits.is_empty() {
+        return (0, 0.0);
+    }
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for hit in hits {
+        let domain = domain_of(&hit.canonical_url);
+        let key = if domain.is_empty() {
+            hit.canonical_url.clone()
+        } else {
+            domain
+        };
+        *counts.entry(key).or_default() += 1;
+    }
+
+    let unique = counts.len();
+    if unique <= 1 {
+        return (unique, 0.0);
+    }
+
+    let total = hits.len() as f32;
+    let entropy: f32 = counts
+        .values()
+        .map(|count| {
+            let p = *count as f32 / total;
+            -p * p.log2()
+        })
+        .sum();
+    let max_entropy = (hits.len() as f32).log2();
+    let normalized = if max_entropy > 0.0 {
+        (entropy / max_entropy).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (unique, normalized)
 }
 
 /// Widok outcome'u potrzebny do fuzji (testowalny bez `SearchEngine`).
@@ -518,6 +583,47 @@ mod tests {
     #[test]
     fn domain_of_strips_www() {
         assert_eq!(domain_of("https://www.example.org/x"), "example.org");
+    }
+
+    #[test]
+    fn fuse_suppresses_near_duplicate_mirrors() {
+        let text = "Cichy balon nad miastem to narracja o rzekomym obiekcie obserwowanym nocą przez wielu świadków";
+        let mut a = raw("searxng", 1, "https://a.example/story", "Cichy balon");
+        a.snippet = text.into();
+        let mut b = raw("brave", 1, "https://b.example/mirror", "Cichy balon");
+        b.snippet = text.into();
+
+        let (hits, removed) = fuse_with_stats(
+            &[
+                ProviderOutcomeView::new(vec![a]),
+                ProviderOutcomeView::new(vec![b]),
+            ],
+            10,
+        );
+        assert_eq!(removed, 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].providers, vec!["searxng", "brave"]);
+    }
+
+    #[test]
+    fn diversity_is_normalized_entropy() {
+        let a = ProviderOutcomeView::new(vec![
+            raw("demo", 1, "https://a.example/1", "1"),
+            raw("demo", 2, "https://b.example/2", "2"),
+            raw("demo", 3, "https://c.example/3", "3"),
+        ]);
+        let hits = fuse(&[a], 10);
+        let (unique, score) = diversity(&hits);
+        assert_eq!(unique, 3);
+        assert!(score > 0.99);
+
+        let same = ProviderOutcomeView::new(vec![
+            raw("demo", 1, "https://a.example/1", "1"),
+            raw("demo", 2, "https://a.example/2", "2"),
+        ]);
+        let (unique, score) = diversity(&fuse(&[same], 10));
+        assert_eq!(unique, 1);
+        assert_eq!(score, 0.0);
     }
 
     #[tokio::test]

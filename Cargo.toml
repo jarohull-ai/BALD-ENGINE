@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Jarosław Kuchta <jarohull@gmail.com>"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 bse-core = { path = "crates/bse-core" }
@@ -17,22 +17,28 @@ bse-guard = { path = "crates/bse-guard" }
 bse-store = { path = "crates/bse-store" }
 bse-providers = { path = "crates/bse-providers" }
 bse-pipeline = { path = "crates/bse-pipeline" }
+bse-fetch = { path = "crates/bse-fetch" }
+bse-index = { path = "crates/bse-index" }
 
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 directories = "6"
+encoding_rs = "0.8"
 futures = "0.3"
 hex = "0.4"
+ipnet = "2"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "stream", "gzip", "brotli", "deflate"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+scraper = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
+tantivy = "0.27"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 toml = "0.8"
 unicode-normalization = "0.1"
 url = "2"

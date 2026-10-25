@@ -131,4 +131,13 @@ pub struct SearchReport {
     pub latency_ms: u64,
     pub warnings: Vec<String>,
     pub stored_run_id: Option<String>,
+    /// Liczba unikalnych domen w finalnym zestawie wyników.
+    #[serde(default)]
+    pub unique_domains: usize,
+    /// Znormalizowana entropia Shannona rozkładu domen (0..1).
+    #[serde(default)]
+    pub source_diversity: f32,
+    /// Ile wyników usunęła deduplikacja near-duplicate (MinHash/LSH).
+    #[serde(default)]
+    pub near_duplicates_removed: usize,
 }

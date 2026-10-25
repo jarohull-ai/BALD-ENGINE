@@ -1,12 +1,17 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use bse_config::{config_path, expand_tilde, write_sample, Config};
 use bse_core::{Gate, GateCtx, GateDecision, Lang, Provider, SearchReport};
-use bse_guard::{AuditLog, CitationGate, CitationStatus, RulesGate};
-use bse_pipeline::{SearchEngine, SearchOptions};
+use bse_fetch::FetchCache;
+use bse_fetch::{FetchError, FetchOptions, FetchedDocument, Fetcher};
+use bse_guard::audit::subject_query;
+use bse_guard::{sha256_prefixed, AuditLog, CitationGate, CitationStatus, RulesGate};
+use bse_index::{DocumentIndex, IndexDocument};
+use bse_pipeline::{domain_of, SearchEngine, SearchOptions};
 use bse_providers::{BraveProvider, DemoProvider, SearxngProvider};
 use bse_store::{RunStore, Store};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -45,6 +50,13 @@ enum Command {
     Providers {
         #[command(subcommand)]
         command: ProvidersCommand,
+    },
+    /// Pobierz stronę przez politykę SSRF (bez indeksowania).
+    Fetch(FetchArgs),
+    /// Lokalny indeks Tantivy: dodawanie, wyszukiwanie, statystyki.
+    Index {
+        #[command(subcommand)]
+        command: IndexCommand,
     },
     /// Konfiguracja lokalna.
     Config {
@@ -139,6 +151,44 @@ enum ProvidersCommand {
     },
 }
 
+#[derive(Debug, Args)]
+struct FetchArgs {
+    url: String,
+    /// Nie używaj lokalnego cache.
+    #[arg(long)]
+    no_cache: bool,
+    /// Pokaż cały wyekstrahowany tekst, nie tylko początek.
+    #[arg(long)]
+    text: bool,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum IndexCommand {
+    /// Pobierz URL, wyekstrahuj treść i dodaj/zaktualizuj dokument w indeksie.
+    Add {
+        url: String,
+        #[arg(long)]
+        no_cache: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Szukaj w lokalnym indeksie (guard działa też tutaj).
+    Search {
+        query: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Liczba dokumentów w indeksie.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
     /// Zapisz przykładowy plik konfiguracji.
@@ -169,6 +219,8 @@ async fn run() -> Result<ExitCode> {
         Command::Audit { command } => audit(command),
         Command::Citation { command } => citation(command),
         Command::Providers { command } => providers(command),
+        Command::Fetch(args) => fetch(args).await,
+        Command::Index { command } => index(command).await,
         Command::Config { command } => config(command),
     }
 }
@@ -283,6 +335,11 @@ fn print_report(report: &SearchReport) {
             }
         }
     }
+
+    println!(
+        "diversity: {:.2} ({} domen), near-dupes: {}",
+        report.source_diversity, report.unique_domains, report.near_duplicates_removed
+    );
 
     for warning in &report.warnings {
         println!("warning: {warning}");
@@ -513,6 +570,384 @@ fn enabled(value: bool) -> &'static str {
         "enabled"
     } else {
         "disabled"
+    }
+}
+
+fn build_fetcher(cfg: &Config, no_cache: bool) -> Result<Fetcher> {
+    let options = FetchOptions {
+        max_bytes: cfg.fetch.max_bytes.max(1),
+        max_redirects: cfg.fetch.max_redirects,
+        timeout: Duration::from_secs(cfg.fetch.timeout_secs.max(1)),
+        ..FetchOptions::default()
+    };
+    let fetcher = Fetcher::new(options).context("cannot build HTTP fetcher")?;
+    if no_cache {
+        return Ok(fetcher);
+    }
+
+    let cache = FetchCache::new(
+        expand_tilde(&cfg.fetch.cache_dir),
+        Duration::from_secs(cfg.fetch.cache_ttl_secs),
+    )
+    .context("cannot open fetch cache")?;
+    Ok(fetcher.with_cache(cache))
+}
+
+async fn fetch_audited(
+    fetcher: &Fetcher,
+    raw_url: &str,
+    audit: &mut AuditLog,
+) -> Result<FetchedDocument, FetchError> {
+    let subject = sha256_prefixed(raw_url);
+    match fetcher.fetch(raw_url).await {
+        Ok(document) => {
+            if let Err(error) = audit.append(
+                "fetch.request",
+                &subject,
+                "ssrf",
+                "allow",
+                serde_json::json!({
+                    "status": document.status,
+                    "content_hash": &document.content_hash,
+                    "text_chars": document.text.chars().count(),
+                    "cache_hit": document.cache_hit,
+                    "noindex": document.noindex,
+                }),
+            ) {
+                eprintln!("warning: audit: {error}");
+            }
+            Ok(document)
+        }
+        Err(error) => {
+            if let Err(audit_error) = audit.append(
+                "fetch.request",
+                &subject,
+                "ssrf",
+                "refuse",
+                serde_json::json!({ "error": error.kind() }),
+            ) {
+                eprintln!("warning: audit: {audit_error}");
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn fetch(args: FetchArgs) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let mut audit =
+        AuditLog::open(expand_tilde(&cfg.security.audit_log)).context("cannot open audit log")?;
+    let fetcher = build_fetcher(&cfg, args.no_cache)?;
+
+    let document = match fetch_audited(&fetcher, &args.url, &mut audit).await {
+        Ok(document) => document,
+        Err(error) => {
+            eprintln!("fetch: {error}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&document)?);
+    } else {
+        print_fetched(&document, args.text);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_fetched(document: &FetchedDocument, full_text: bool) {
+    println!("status:    {}", document.status);
+    println!("url:       {}", document.final_url);
+    if document.requested_url != document.final_url {
+        println!("requested: {}", document.requested_url);
+    }
+    println!("canonical: {}", document.canonical_url);
+    println!("title:     {}", document.title);
+    if !document.description.is_empty() {
+        println!("description: {}", document.description);
+    }
+    if let Some(lang) = &document.lang {
+        println!("lang:      {lang}");
+    }
+    if let Some(published) = &document.published {
+        println!("published: {published}");
+    }
+    println!("chars:     {}", document.text.chars().count());
+    println!("hash:      {}", document.content_hash);
+    println!(
+        "cache:     {}",
+        if document.cache_hit { "hit" } else { "miss" }
+    );
+    if document.noindex {
+        println!("robots:    noindex (nie zostanie zindeksowany)");
+    }
+
+    println!();
+    if full_text {
+        println!("{}", document.text);
+    } else {
+        let excerpt: String = document.text.chars().take(800).collect();
+        println!("{excerpt}");
+    }
+}
+
+async fn index(command: IndexCommand) -> Result<ExitCode> {
+    match command {
+        IndexCommand::Add {
+            url,
+            no_cache,
+            json,
+        } => index_add(url, no_cache, json).await,
+        IndexCommand::Search { query, limit, json } => index_search(query, limit, json),
+        IndexCommand::Stats { json } => index_stats(json),
+    }
+}
+
+fn open_index(cfg: &Config) -> Result<DocumentIndex> {
+    DocumentIndex::open(expand_tilde(&cfg.storage.index_path)).context("cannot open local index")
+}
+
+async fn index_add(raw_url: String, no_cache: bool, json: bool) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let mut audit =
+        AuditLog::open(expand_tilde(&cfg.security.audit_log)).context("cannot open audit log")?;
+    let fetcher = build_fetcher(&cfg, no_cache)?;
+
+    let document = match fetch_audited(&fetcher, &raw_url, &mut audit).await {
+        Ok(document) => document,
+        Err(error) => {
+            eprintln!("index add: {error}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+
+    if document.noindex {
+        let subject = sha256_prefixed(&document.canonical_url);
+        if let Err(error) = audit.append(
+            "index.add",
+            &subject,
+            "robots",
+            "skip",
+            serde_json::json!({ "reason": "noindex" }),
+        ) {
+            eprintln!("warning: audit: {error}");
+        }
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "indexed": false,
+                    "reason": "noindex",
+                    "url": document.canonical_url,
+                }))?
+            );
+        } else {
+            println!("not indexed: {}", document.canonical_url);
+            println!("reason: meta robots noindex");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if document.text.trim().is_empty() {
+        bail!(
+            "no extractable text at {} (JavaScript-rendered page?)",
+            document.final_url
+        );
+    }
+
+    let index = open_index(&cfg)?;
+    let domain = domain_of(&document.canonical_url);
+    let title = if document.title.trim().is_empty() {
+        document.canonical_url.clone()
+    } else {
+        document.title.clone()
+    };
+    let index_document = IndexDocument::new(
+        document.canonical_url.clone(),
+        title,
+        document.text.clone(),
+        document.description.clone(),
+        domain.clone(),
+        document.published.clone(),
+        document.lang.clone(),
+        document.fetched_at.clone(),
+        document.content_hash.clone(),
+        document.html_hash.clone(),
+    );
+    index
+        .add(&index_document)
+        .context("cannot write document to index")?;
+    let stats = index.stats().context("cannot read index stats")?;
+
+    let subject = sha256_prefixed(&document.canonical_url);
+    if let Err(error) = audit.append(
+        "index.add",
+        &subject,
+        "index",
+        "allow",
+        serde_json::json!({
+            "content_hash": &document.content_hash,
+            "chars": document.text.chars().count(),
+            "documents": stats.documents,
+        }),
+    ) {
+        eprintln!("warning: audit: {error}");
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "indexed": true,
+                "url": document.canonical_url,
+                "title": index_document.title,
+                "domain": domain,
+                "chars": document.text.chars().count(),
+                "content_hash": document.content_hash,
+                "cache_hit": document.cache_hit,
+                "documents": stats.documents,
+            }))?
+        );
+    } else {
+        println!("indexed: {}", document.canonical_url);
+        println!("title:   {}", index_document.title);
+        println!("chars:   {}", document.text.chars().count());
+        println!("hash:    {}", document.content_hash);
+        println!(
+            "cache:   {}",
+            if document.cache_hit { "hit" } else { "miss" }
+        );
+        println!("documents: {}", stats.documents);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn index_search(query: String, limit: usize, json: bool) -> Result<ExitCode> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        bail!("empty query");
+    }
+
+    let cfg = Config::load().context("cannot load config")?;
+    let mut audit =
+        AuditLog::open(expand_tilde(&cfg.security.audit_log)).context("cannot open audit log")?;
+    let subject = subject_query(&query);
+    let verdict = RulesGate::new().check(&GateCtx::search(&query, Lang::Auto));
+
+    if let Err(error) = audit.append(
+        "query.guard",
+        &subject,
+        &verdict.gate,
+        decision_code(verdict.decision),
+        serde_json::json!({
+            "reasons": &verdict.reasons,
+            "matched": &verdict.matched,
+            "score": verdict.score,
+            "surface": "index",
+        }),
+    ) {
+        eprintln!("warning: audit: {error}");
+    }
+
+    if verdict.decision != GateDecision::Allow {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&verdict)?);
+        } else {
+            println!(
+                "{} ({}) score={:.2}",
+                decision_label(verdict.decision),
+                verdict.gate,
+                verdict.score
+            );
+            println!("Zapytanie zatrzymane. Szukaj tematu/twierdzenia, nie osoby.");
+        }
+        return Ok(ExitCode::from(2));
+    }
+
+    let started = Instant::now();
+    let index = open_index(&cfg)?;
+    let hits = index
+        .search(&query, limit.max(1))
+        .context("index search failed")?;
+    let latency_ms = started.elapsed().as_millis() as u64;
+
+    if let Err(error) = audit.append(
+        "index.search",
+        &subject,
+        "index",
+        "allow",
+        serde_json::json!({
+            "hits": hits.len(),
+            "latency_ms": latency_ms,
+        }),
+    ) {
+        eprintln!("warning: audit: {error}");
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": query,
+                "hits": hits,
+                "latency_ms": latency_ms,
+                "index_path": expand_tilde(&cfg.storage.index_path),
+            }))?
+        );
+    } else {
+        println!("BALD local index · {} hits · {latency_ms} ms", hits.len());
+        println!("query: {query}");
+        if hits.is_empty() {
+            println!();
+            println!("Brak wyników.");
+            return Ok(ExitCode::SUCCESS);
+        }
+        println!();
+        for (idx, hit) in hits.iter().enumerate() {
+            println!("{}. [{:.4}] {}", idx + 1, hit.score, hit.title);
+            println!("   {}", hit.url);
+            if !hit.excerpt.is_empty() {
+                println!("   {}", hit.excerpt);
+            }
+            let published = hit
+                .published
+                .as_deref()
+                .map(|p| format!(" · {p}"))
+                .unwrap_or_default();
+            println!("   {}{published}", hit.domain);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn index_stats(json: bool) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let index = open_index(&cfg)?;
+    let stats = index.stats().context("cannot read index stats")?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "documents": stats.documents,
+                "path": expand_tilde(&cfg.storage.index_path),
+            }))?
+        );
+    } else {
+        println!("documents: {}", stats.documents);
+        println!(
+            "path:      {}",
+            expand_tilde(&cfg.storage.index_path).display()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn decision_code(decision: GateDecision) -> &'static str {
+    match decision {
+        GateDecision::Allow => "allow",
+        GateDecision::Rewrite => "rewrite",
+        GateDecision::Review => "review",
+        GateDecision::Refuse => "refuse",
     }
 }
 

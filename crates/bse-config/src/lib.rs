@@ -42,6 +42,7 @@ pub enum ConfigError {
 pub struct Config {
     pub app: AppConfig,
     pub storage: StorageConfig,
+    pub fetch: FetchConfig,
     pub security: SecurityConfig,
     pub transport: TransportConfig,
     pub providers: ProvidersConfig,
@@ -71,16 +72,41 @@ pub struct StorageConfig {
     /// `sqlite` (v1). `postgres` będzie opcją feature `server`.
     pub backend: String,
     pub path: String,
+    /// Katalog indeksu Tantivy.
+    pub index_path: String,
 }
 
 impl Default for StorageConfig {
     fn default() -> Self {
+        let data_dir = default_data_dir();
         Self {
             backend: "sqlite".to_string(),
-            path: default_data_dir()
-                .join("bald.db")
-                .to_string_lossy()
-                .to_string(),
+            path: data_dir.join("bald.db").to_string_lossy().to_string(),
+            index_path: data_dir.join("index").to_string_lossy().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FetchConfig {
+    /// Cache wyekstrahowanych dokumentów (nie surowego HTML).
+    pub cache_dir: String,
+    pub cache_ttl_secs: u64,
+    pub max_bytes: usize,
+    pub timeout_secs: u64,
+    pub max_redirects: usize,
+}
+
+impl Default for FetchConfig {
+    fn default() -> Self {
+        let data_dir = default_data_dir();
+        Self {
+            cache_dir: data_dir.join("cache").to_string_lossy().to_string(),
+            cache_ttl_secs: 3600,
+            max_bytes: 2 * 1024 * 1024,
+            timeout_secs: 20,
+            max_redirects: 5,
         }
     }
 }
@@ -221,6 +247,21 @@ impl Config {
                 self.storage.path = v;
             }
         }
+        if let Ok(v) = std::env::var("BALD_INDEX_PATH") {
+            if !v.trim().is_empty() {
+                self.storage.index_path = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_CACHE_DIR") {
+            if !v.trim().is_empty() {
+                self.fetch.cache_dir = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_FETCH_TIMEOUT_SECS") {
+            if let Ok(secs) = v.trim().parse::<u64>() {
+                self.fetch.timeout_secs = secs;
+            }
+        }
         if let Ok(v) = std::env::var("BALD_TOR") {
             self.transport.tor = parse_bool(&v).unwrap_or(self.transport.tor);
         }
@@ -338,6 +379,14 @@ language = "pl"              # pl | en
 [storage]
 backend = "sqlite"           # sqlite (v1)
 path = "~/.local/share/bald/bald.db"
+index_path = "~/.local/share/bald/index"   # Tantivy
+
+[fetch]
+cache_dir = "~/.local/share/bald/cache"    # wyekstrahowane dokumenty
+cache_ttl_secs = 3600
+max_bytes = 2097152          # 2 MiB na odpowiedź
+timeout_secs = 20
+max_redirects = 5
 
 [security]
 action_gate = "none"         # none | seed-core (feature "seed-gate", faza 3)
@@ -371,6 +420,8 @@ mod tests {
     fn sample_parses() {
         let cfg: Config = toml::from_str(sample_toml()).expect("sample must parse");
         assert_eq!(cfg.storage.backend, "sqlite");
+        assert!(cfg.storage.index_path.ends_with("index"));
+        assert_eq!(cfg.fetch.max_redirects, 5);
         assert!(!cfg.providers.any_enabled());
     }
 
