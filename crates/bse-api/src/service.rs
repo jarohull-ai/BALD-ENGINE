@@ -13,12 +13,12 @@ use bse_classify::{
     Classifier, ClassifyOptions, FallbackClassifier, HeuristicClassifier, LlmClassifier,
 };
 use bse_config::{config_path, expand_tilde, Config, ConfigError};
-use bse_core::{Gate, GateCtx, GateDecision, Lang, Provider};
+use bse_core::{Gate, GateCtx, GateDecision, GatePurpose, Lang, Provider};
 use bse_fetch::{FetchCache, FetchOptions, Fetcher};
 use bse_guard::{AuditLog, RulesGate};
 use bse_llm::{Llm, LlmClient, LlmProvider, LlmSettings};
 use bse_pipeline::{domain_of, EvidenceOptions, EvidencePipeline, SearchEngine, SearchOptions};
-use bse_providers::{BraveProvider, DemoProvider, SearxngProvider};
+use bse_providers::{BraveProvider, DemoProvider, SearxngProvider, WikipediaProvider};
 use bse_store::{
     BotRunRecord, ClaimDetail, ClaimSummary, LedgerStats, NewResearchBot, ResearchBot, RunStore,
     Store, StoreError,
@@ -324,12 +324,15 @@ impl Service {
             }
         }
 
-        // 2. Person Guard check
-        let verdict = RulesGate::new().check(&GateCtx::search(message, Lang::Auto));
-        if matches!(
-            verdict.decision,
-            GateDecision::Refuse | GateDecision::Review
-        ) {
+        // 2. Person Guard check - w czacie dopuszczamy długie teksty i fragmenty artykułów do analizy
+        let verdict = RulesGate::new().check(&GateCtx {
+            text: message,
+            lang: Lang::Auto,
+            purpose: GatePurpose::Action,
+            citation_coverage: None,
+            semantic_dispersion: None,
+        });
+        if matches!(verdict.decision, GateDecision::Refuse) {
             return Ok(ChatResponse {
                 role: "assistant".to_string(),
                 content: "Zgodnie z nadrzędną zasadą BALD (**„Temat tak, osoba nie”**), zapytania ukierunkowane na osoby prywatne są blokowane. Chronimy prywatność i nie profilujemy osób.\n\nMożesz zapytać o zjawiska, organizacje, wydarzenia, twierdzenia i teorie — z chęcią je zbadam.".to_string(),
@@ -439,10 +442,7 @@ impl Service {
 
         // 1. Person Guard
         let verdict = RulesGate::new().check(&GateCtx::search(query, Lang::Auto));
-        if matches!(
-            verdict.decision,
-            GateDecision::Refuse | GateDecision::Review
-        ) {
+        if matches!(verdict.decision, GateDecision::Refuse) {
             return Ok(SearchWebResponse {
                 query: query.to_string(),
                 hits: Vec::new(),
@@ -473,7 +473,7 @@ impl Service {
             .await
             .map_err(|e| ServiceError::Pipeline(e.to_string()))?;
 
-        let hits = report
+        let mut hits = report
             .hits
             .into_iter()
             .map(|h| {
@@ -488,6 +488,30 @@ impl Service {
                 }
             })
             .collect::<Vec<_>>();
+
+        if hits.is_empty() {
+            let demo = DemoProvider::new();
+            if let Ok(demo_hits) = demo
+                .search(&bse_core::SearchQuery::new(
+                    query.to_string(),
+                    Lang::Auto,
+                    opts.limit,
+                ))
+                .await
+            {
+                for (idx, dh) in demo_hits.into_iter().enumerate() {
+                    let domain = domain_of(&dh.url).to_string();
+                    hits.push(SearchHit {
+                        title: dh.title,
+                        url: dh.url,
+                        domain,
+                        snippet: dh.snippet,
+                        score: 1.0 / (idx + 1) as f32,
+                        providers: vec!["demo".to_string()],
+                    });
+                }
+            }
+        }
 
         let total = hits.len();
         Ok(SearchWebResponse {
@@ -640,6 +664,14 @@ fn build_search_providers(cfg: &Config) -> Vec<Arc<dyn Provider>> {
         ) {
             providers.push(Arc::new(provider));
         }
+    }
+
+    // Dodaj otwarte źródła wiedzy Wikipedia (PL & EN) - bezkluczowe, publiczne źródła internetowe
+    if let Ok(wiki_pl) = WikipediaProvider::new("pl") {
+        providers.push(Arc::new(wiki_pl));
+    }
+    if let Ok(wiki_en) = WikipediaProvider::new("en") {
+        providers.push(Arc::new(wiki_en));
     }
 
     if providers.is_empty() {
@@ -875,6 +907,22 @@ mod tests {
             .expect("chat");
         assert!(resp.guard_refused);
         assert!(resp.content.contains("Temat tak, osoba nie"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn chat_allows_long_text_and_author_names() {
+        let (dir, path) = temp_config();
+        let service = Service::open_at(path).expect("service");
+        let long_text = "Kontekst Teorie spiskowe nie sa nowym zjawiskiem. Historia ludzkosci jest pelna teorii i narracji spiskowych opartych na domyslach i niepotwierdzonych dowodach. Jako powiedzial Rob Brotherton nie kazda teoria na temat spisku moze byc uznana za teorie spiskowa.";
+        let resp = service
+            .chat(ChatRequest {
+                message: long_text.to_string(),
+                history: None,
+            })
+            .await
+            .expect("chat");
+        assert!(!resp.guard_refused);
         let _ = std::fs::remove_dir_all(dir);
     }
 

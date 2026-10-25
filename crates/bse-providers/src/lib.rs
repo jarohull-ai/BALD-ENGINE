@@ -6,10 +6,12 @@
 pub mod brave;
 pub mod demo;
 pub mod searxng;
+pub mod wikipedia;
 
 pub use brave::BraveProvider;
 pub use demo::DemoProvider;
 pub use searxng::SearxngProvider;
+pub use wikipedia::WikipediaProvider;
 
 use reqwest::Client;
 
