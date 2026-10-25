@@ -2,7 +2,7 @@
 
 use bse_api::{
     ChatRequest, ChatResponse, ClaimDetail, ClaimsResponse, DiscoveryResponse, IngestResponse,
-    LedgerStats, Service, SettingsUpdate, SettingsView,
+    LedgerStats, SearchWebResponse, Service, SettingsUpdate, SettingsView,
 };
 
 struct AppState {
@@ -80,6 +80,19 @@ async fn ingest_evidence(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn search_web(
+    state: tauri::State<'_, AppState>,
+    query: String,
+    limit: usize,
+) -> Result<SearchWebResponse, String> {
+    state
+        .service
+        .search_web(&query, limit)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 fn main() {
     let service = Service::open().expect("cannot open BALD service");
 
@@ -93,7 +106,8 @@ fn main() {
             save_settings,
             discover_models,
             chat,
-            ingest_evidence
+            ingest_evidence,
+            search_web
         ])
         .run(tauri::generate_context!())
         .expect("error while running BALD desktop");

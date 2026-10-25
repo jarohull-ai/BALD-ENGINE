@@ -16,6 +16,7 @@ bse-fetch.workspace = true
 bse-guard.workspace = true
 bse-llm.workspace = true
 bse-pipeline.workspace = true
+bse-providers.workspace = true
 bse-store.workspace = true
 chrono.workspace = true
 include_dir = "0.7"

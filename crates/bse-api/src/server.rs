@@ -24,7 +24,8 @@ use uuid::Uuid;
 
 use crate::discovery::{discover_local_engines, DiscoveryResponse};
 use crate::service::{
-    ChatRequest, ChatResponse, ClaimsResponse, IngestResponse, Service, ServiceError,
+    ChatRequest, ChatResponse, ClaimsResponse, IngestResponse, SearchWebResponse, Service,
+    ServiceError,
 };
 use crate::settings::{SettingsError, SettingsUpdate, SettingsView};
 use bse_store::{ClaimDetail, LedgerStats};
@@ -156,6 +157,7 @@ fn router(state: AppState) -> Router {
         .route("/models/discover", get(models_discover))
         .route("/chat", axum::routing::post(chat_post))
         .route("/evidence/ingest", axum::routing::post(ingest_post))
+        .route("/search", get(search_get).post(search_post))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()
@@ -242,6 +244,45 @@ async fn ingest_post(
     state
         .service
         .ingest(&payload.url)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchQueryParam {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchPayload {
+    query: String,
+    limit: Option<usize>,
+}
+
+async fn search_get(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQueryParam>,
+) -> Result<Json<SearchWebResponse>, ApiError> {
+    let q = query.q.unwrap_or_default();
+    let limit = query.limit.unwrap_or(10);
+    state
+        .service
+        .search_web(&q, limit)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn search_post(
+    State(state): State<AppState>,
+    Json(payload): Json<SearchPayload>,
+) -> Result<Json<SearchWebResponse>, ApiError> {
+    let limit = payload.limit.unwrap_or(10);
+    state
+        .service
+        .search_web(&payload.query, limit)
         .await
         .map(Json)
         .map_err(ApiError::from)

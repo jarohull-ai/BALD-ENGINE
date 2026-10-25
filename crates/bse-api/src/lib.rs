@@ -13,7 +13,7 @@ pub use discovery::{discover_local_engines, DiscoveredEngine, DiscoveryResponse}
 pub use server::{serve, ServeOptions};
 pub use service::{
     extract_url, AcceptedClaimInfo, ChatMessage, ChatRequest, ChatResponse, ClaimsResponse,
-    IngestResponse, Service, ServiceError,
+    IngestResponse, SearchHit, SearchWebResponse, Service, ServiceError,
 };
 pub use settings::{
     apply_update, view, BraveView, LlmView, SearxngView, SettingsError, SettingsUpdate,

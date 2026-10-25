@@ -213,3 +213,21 @@ export interface ChatResponse {
   matching_claims: ClaimSummary[];
 }
 
+export interface SearchHit {
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+  score: number;
+  providers: string[];
+}
+
+export interface SearchWebResponse {
+  query: string;
+  hits: SearchHit[];
+  guard_refused: boolean;
+  guard_message?: string;
+  total: number;
+  latency_ms: number;
+}
+

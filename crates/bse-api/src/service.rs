@@ -12,12 +12,13 @@ use bse_classify::{
     Classifier, ClassifyOptions, FallbackClassifier, HeuristicClassifier, LlmClassifier,
 };
 use bse_config::{config_path, expand_tilde, Config, ConfigError};
-use bse_core::{Gate, GateCtx, GateDecision, Lang};
+use bse_core::{Gate, GateCtx, GateDecision, Lang, Provider};
 use bse_fetch::{FetchCache, FetchOptions, Fetcher};
 use bse_guard::{AuditLog, RulesGate};
 use bse_llm::{Llm, LlmClient, LlmProvider, LlmSettings};
-use bse_pipeline::{EvidenceOptions, EvidencePipeline};
-use bse_store::{ClaimDetail, ClaimSummary, LedgerStats, Store, StoreError};
+use bse_pipeline::{domain_of, EvidenceOptions, EvidencePipeline, SearchEngine, SearchOptions};
+use bse_providers::{BraveProvider, DemoProvider, SearxngProvider};
+use bse_store::{ClaimDetail, ClaimSummary, LedgerStats, RunStore, Store, StoreError};
 
 use crate::settings::{self, SettingsError, SettingsUpdate, SettingsView};
 
@@ -91,6 +92,26 @@ pub struct ChatResponse {
     pub guard_refused: bool,
     pub ingest: Option<IngestResponse>,
     pub matching_claims: Vec<ClaimSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub title: String,
+    pub url: String,
+    pub domain: String,
+    pub snippet: String,
+    pub score: f32,
+    pub providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchWebResponse {
+    pub query: String,
+    pub hits: Vec<SearchHit>,
+    pub guard_refused: bool,
+    pub guard_message: Option<String>,
+    pub total: usize,
+    pub latency_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -301,7 +322,10 @@ impl Service {
 
         // 2. Person Guard check
         let verdict = RulesGate::new().check(&GateCtx::search(message, Lang::Auto));
-        if matches!(verdict.decision, GateDecision::Refuse | GateDecision::Review) {
+        if matches!(
+            verdict.decision,
+            GateDecision::Refuse | GateDecision::Review
+        ) {
             return Ok(ChatResponse {
                 role: "assistant".to_string(),
                 content: "Zgodnie z nadrzędną zasadą BALD (**„Temat tak, osoba nie”**), zapytania ukierunkowane na osoby prywatne są blokowane. Chronimy prywatność i nie profilujemy osób.\n\nMożesz zapytać o zjawiska, organizacje, wydarzenia, twierdzenia i teorie — z chęcią je zbadam.".to_string(),
@@ -389,6 +413,117 @@ impl Service {
             matching_claims: matching,
         })
     }
+
+    /// Wyszukiwanie w internecie przez aktywne providery (SearXNG / Brave / Demo)
+    /// z automatyczną ochroną Person Guard.
+    pub async fn search_web(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<SearchWebResponse, ServiceError> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(SearchWebResponse {
+                query: String::new(),
+                hits: Vec::new(),
+                guard_refused: false,
+                guard_message: None,
+                total: 0,
+                latency_ms: 0,
+            });
+        }
+
+        // 1. Person Guard
+        let verdict = RulesGate::new().check(&GateCtx::search(query, Lang::Auto));
+        if matches!(
+            verdict.decision,
+            GateDecision::Refuse | GateDecision::Review
+        ) {
+            return Ok(SearchWebResponse {
+                query: query.to_string(),
+                hits: Vec::new(),
+                guard_refused: true,
+                guard_message: Some(
+                    "Zgodnie z zasadą BALD („Temat tak, osoba nie”), wyszukiwanie osób prywatnych jest zablokowane. Szukaj tematów, instytucji, zjawisk i wydarzeń.".to_string(),
+                ),
+                total: 0,
+                latency_ms: 0,
+            });
+        }
+
+        let config = self.effective_config()?;
+        let audit = AuditLog::open(expand_tilde(&config.security.audit_log))
+            .map_err(|e| ServiceError::Internal(format!("cannot open audit log: {e}")))?;
+
+        let providers = build_search_providers(&config);
+        let run_store: Arc<dyn RunStore> = self.store.clone();
+        let engine = SearchEngine::new(providers, audit, Some(run_store));
+
+        let opts = SearchOptions {
+            limit: limit.clamp(1, 50),
+            store: true,
+        };
+
+        let report = engine
+            .search(query, Lang::Auto, &opts)
+            .await
+            .map_err(|e| ServiceError::Pipeline(e.to_string()))?;
+
+        let hits = report
+            .hits
+            .into_iter()
+            .map(|h| {
+                let domain = domain_of(&h.canonical_url).to_string();
+                SearchHit {
+                    title: h.title,
+                    url: h.canonical_url,
+                    domain,
+                    snippet: h.snippet,
+                    score: h.score,
+                    providers: h.providers,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let total = hits.len();
+        Ok(SearchWebResponse {
+            query: query.to_string(),
+            hits,
+            guard_refused: false,
+            guard_message: None,
+            total,
+            latency_ms: report.latency_ms,
+        })
+    }
+}
+
+fn build_search_providers(cfg: &Config) -> Vec<Arc<dyn Provider>> {
+    let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
+
+    if cfg.providers.searxng.enabled {
+        if let Ok(provider) = SearxngProvider::new(
+            cfg.searxng_base_url(),
+            cfg.providers.searxng.language.clone(),
+            cfg.providers.searxng.safesearch,
+        ) {
+            providers.push(Arc::new(provider));
+        }
+    }
+
+    if cfg.providers.brave.enabled {
+        if let Ok(provider) = BraveProvider::new(
+            cfg.providers.brave.api_key.clone(),
+            cfg.providers.brave.country.clone(),
+        ) {
+            providers.push(Arc::new(provider));
+        }
+    }
+
+    if providers.is_empty() {
+        providers.push(Arc::new(DemoProvider::new()));
+    }
+
+    providers
 }
 
 pub fn extract_url(text: &str) -> Option<String> {
@@ -617,6 +752,33 @@ mod tests {
             .expect("chat");
         assert!(resp.guard_refused);
         assert!(resp.content.contains("Temat tak, osoba nie"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn search_web_refuses_person_query() {
+        let (dir, path) = temp_config();
+        let service = Service::open_at(path).expect("service");
+        let resp = service
+            .search_web("gdzie mieszka jan kowalski numer telefonu", 10)
+            .await
+            .expect("search");
+        assert!(resp.guard_refused);
+        assert!(resp.hits.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn search_web_returns_results_for_benign_query() {
+        let (dir, path) = temp_config();
+        let service = Service::open_at(path).expect("service");
+        let resp = service
+            .search_web("Great Reset Klaus Schwab WEF", 5)
+            .await
+            .expect("search");
+        assert!(!resp.guard_refused);
+        // Returns results from Demo fixtures if SearXNG/Brave are not running
+        assert!(!resp.hits.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

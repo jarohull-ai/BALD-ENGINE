@@ -298,6 +298,7 @@ dependencies = [
  "bse-guard",
  "bse-llm",
  "bse-pipeline",
+ "bse-providers",
  "bse-store",
  "chrono",
  "include_dir",

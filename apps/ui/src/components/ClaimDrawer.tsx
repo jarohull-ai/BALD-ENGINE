@@ -9,6 +9,7 @@ import {
   CircleHelp,
   Copy,
   Cpu,
+  Download,
   ExternalLink,
   FileText,
   Hash,
@@ -194,6 +195,44 @@ export function ClaimDrawer({
     }
   }
 
+  function exportMarkdown() {
+    let md = `# BALD Evidence Ledger Report\n\n`;
+    md += `**Twierdzenie:** ${claim.text}\n`;
+    md += `**ID Twierdzenia:** \`${claim.id}\`\n`;
+    md += `**Rodzaj:** ${claim.kind}\n`;
+    md += `**Liczba źródeł:** ${claim.document_count}\n`;
+    md += `**Liczba cytatów (CitationGate):** ${claim.evidence_count}\n`;
+    md += `**Pierwsze pojawienie:** ${claim.first_seen}\n`;
+    md += `**Ostatnie pojawienie:** ${claim.last_seen}\n\n`;
+    md += `---\n\n## Zweryfikowane cytaty źródłowe\n\n`;
+
+    for (const [i, e] of evidence.entries()) {
+      md += `### ${i + 1}. [${e.title || e.canonical_url}](${e.canonical_url})\n`;
+      md += `- **Domena:** \`${e.domain}\`\n`;
+      md += `- **Stance:** \`${e.stance}\` (siła: ${Math.round(e.strength * 100)}%)\n`;
+      md += `- **Dosłowny cytat:** „${e.quote}”\n`;
+      md += `- **Hash cytatu (SHA-256):** \`${e.quote_hash}\`\n\n`;
+    }
+
+    if (entities.length > 0) {
+      md += `---\n\n## Encje powiązane (wyłącznie nieosobowe)\n\n`;
+      for (const ent of entities) {
+        md += `- **${ent.name}** (${ent.kind})\n`;
+      }
+      md += `\n`;
+    }
+
+    md += `---\n*Wygenerowano przez BALD Search Engine (VIPER STUDIO) · Temat tak, osoba nie.*`;
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bald-raport-twierdzenia-${shortId(claim.id)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div
@@ -217,9 +256,18 @@ export function ClaimDrawer({
           </div>
           <button
             type="button"
+            onClick={exportMarkdown}
+            title={t('chat.exportReport')}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.025] px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-amber-400/40 hover:bg-amber-400/10 hover:text-amber-200"
+          >
+            <Download className="h-3.5 w-3.5 text-amber-300" />
+            <span className="hidden sm:inline">Eksportuj .md</span>
+          </button>
+          <button
+            type="button"
             autoFocus
             onClick={onClose}
-            className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/[0.08] text-slate-500 transition hover:border-white/15 hover:bg-white/[0.04] hover:text-slate-200"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/[0.08] text-slate-500 transition hover:border-white/15 hover:bg-white/[0.04] hover:text-slate-200"
             aria-label={t('detail.close')}
           >
             <X className="h-4 w-4" />

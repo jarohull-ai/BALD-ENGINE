@@ -5,6 +5,7 @@ import type {
   ClaimsResponse,
   DiscoveryResponse,
   IngestResponse,
+  SearchWebResponse,
   SettingsUpdate,
   SettingsView,
 } from './types';
@@ -130,5 +131,12 @@ export async function ingestEvidence(url: string): Promise<IngestResponse> {
     method: 'POST',
     body: JSON.stringify({ url }),
   });
+}
+
+export async function searchWeb(query: string, limit = 10): Promise<SearchWebResponse> {
+  if (isTauriRuntime()) {
+    return invoke<SearchWebResponse>('search_web', { query, limit });
+  }
+  return request<SearchWebResponse>(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
 }
 
