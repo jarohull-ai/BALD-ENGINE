@@ -1,10 +1,13 @@
 import type {
+  BotRunRecord,
   ChatRequest,
   ChatResponse,
   ClaimDetail,
   ClaimsResponse,
   DiscoveryResponse,
   IngestResponse,
+  NewResearchBot,
+  ResearchBot,
   SearchWebResponse,
   SettingsUpdate,
   SettingsView,
@@ -138,5 +141,58 @@ export async function searchWeb(query: string, limit = 10): Promise<SearchWebRes
     return invoke<SearchWebResponse>('search_web', { query, limit });
   }
   return request<SearchWebResponse>(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+}
+
+export async function fetchBots(): Promise<ResearchBot[]> {
+  if (isTauriRuntime()) {
+    return invoke<ResearchBot[]>('bots_list');
+  }
+  return request<ResearchBot[]>('/api/bots');
+}
+
+export async function createBot(requestPayload: NewResearchBot): Promise<ResearchBot> {
+  if (isTauriRuntime()) {
+    return invoke<ResearchBot>('bot_create', { request: requestPayload });
+  }
+  return request<ResearchBot>('/api/bots', {
+    method: 'POST',
+    body: JSON.stringify(requestPayload),
+  });
+}
+
+export async function updateBot(bot: ResearchBot): Promise<void> {
+  if (isTauriRuntime()) {
+    return invoke<void>('bot_update', { bot });
+  }
+  await request<void>(`/api/bots/${encodeURIComponent(bot.id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(bot),
+  });
+}
+
+export async function deleteBot(id: string): Promise<boolean> {
+  if (isTauriRuntime()) {
+    return invoke<boolean>('bot_delete', { id });
+  }
+  const res = await request<{ deleted: boolean }>(`/api/bots/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  return res.deleted;
+}
+
+export async function runBotNow(id: string): Promise<BotRunRecord> {
+  if (isTauriRuntime()) {
+    return invoke<BotRunRecord>('bot_run_now', { id });
+  }
+  return request<BotRunRecord>(`/api/bots/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchBotRuns(id: string): Promise<BotRunRecord[]> {
+  if (isTauriRuntime()) {
+    return invoke<BotRunRecord[]>('bot_runs_list', { id, limit: 50 });
+  }
+  return request<BotRunRecord[]>(`/api/bots/${encodeURIComponent(id)}/runs`);
 }
 

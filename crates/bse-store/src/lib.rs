@@ -147,6 +147,43 @@ pub struct LedgerStats {
     pub documents_with_evidence: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchBot {
+    pub id: String,
+    pub name: String,
+    pub query: String,
+    pub interval_mins: u32,
+    pub enabled: bool,
+    pub last_run_at: Option<String>,
+    pub next_run_at: Option<String>,
+    pub run_count: u64,
+    pub claims_found: u64,
+    pub created_at: String,
+    pub max_sources_per_run: usize,
+    pub auto_ingest: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewResearchBot {
+    pub name: String,
+    pub query: String,
+    pub interval_mins: u32,
+    pub max_sources_per_run: Option<usize>,
+    pub auto_ingest: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotRunRecord {
+    pub id: String,
+    pub bot_id: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub urls_checked: usize,
+    pub claims_added: usize,
+    pub error_msg: Option<String>,
+    pub status: String,
+}
+
 /// Granica backendu historii. Faza 0 ma tylko SQLite; trait pozwala później
 /// podmienić store (np. Postgres w trybie server) bez zmian w pipeline.
 pub trait RunStore: Send + Sync {
@@ -265,6 +302,35 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_claims_documents ON claims(document_count DESC);
             CREATE INDEX IF NOT EXISTS idx_evidence_document ON evidence(document_id);
             CREATE INDEX IF NOT EXISTS idx_claim_entities_entity ON claim_entities(entity_id);
+
+            CREATE TABLE IF NOT EXISTS research_bots (
+                id                  TEXT PRIMARY KEY,
+                name                TEXT NOT NULL,
+                query               TEXT NOT NULL,
+                interval_mins       INTEGER NOT NULL DEFAULT 360,
+                enabled             INTEGER NOT NULL DEFAULT 1,
+                last_run_at         TEXT,
+                next_run_at         TEXT,
+                run_count           INTEGER NOT NULL DEFAULT 0,
+                claims_found        INTEGER NOT NULL DEFAULT 0,
+                created_at          TEXT NOT NULL,
+                max_sources_per_run INTEGER NOT NULL DEFAULT 3,
+                auto_ingest         INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS bot_runs (
+                id           TEXT PRIMARY KEY,
+                bot_id       TEXT NOT NULL REFERENCES research_bots(id) ON DELETE CASCADE,
+                started_at   TEXT NOT NULL,
+                finished_at  TEXT NOT NULL,
+                urls_checked INTEGER NOT NULL DEFAULT 0,
+                claims_added INTEGER NOT NULL DEFAULT 0,
+                error_msg    TEXT,
+                status       TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bot_runs_bot ON bot_runs(bot_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_research_bots_due ON research_bots(enabled, next_run_at);
             "#,
         )?;
 
@@ -636,6 +702,245 @@ impl Store {
             documents_with_evidence,
         })
     }
+
+    pub fn create_bot(&self, new_bot: &NewResearchBot) -> Result<ResearchBot, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let max_sources = new_bot.max_sources_per_run.unwrap_or(3).clamp(1, 20);
+        let auto_ingest = new_bot.auto_ingest.unwrap_or(true);
+        let interval_mins = new_bot.interval_mins.max(1);
+
+        conn.execute(
+            "INSERT INTO research_bots (id, name, query, interval_mins, enabled, last_run_at, next_run_at, run_count, claims_found, created_at, max_sources_per_run, auto_ingest)
+             VALUES (?1, ?2, ?3, ?4, 1, NULL, ?5, 0, 0, ?6, ?7, ?8)",
+            params![
+                id,
+                new_bot.name.trim(),
+                new_bot.query.trim(),
+                interval_mins as i64,
+                now,
+                now,
+                max_sources as i64,
+                if auto_ingest { 1 } else { 0 },
+            ],
+        )?;
+
+        Ok(ResearchBot {
+            id,
+            name: new_bot.name.trim().to_string(),
+            query: new_bot.query.trim().to_string(),
+            interval_mins,
+            enabled: true,
+            last_run_at: None,
+            next_run_at: Some(now.clone()),
+            run_count: 0,
+            claims_found: 0,
+            created_at: now,
+            max_sources_per_run: max_sources,
+            auto_ingest,
+        })
+    }
+
+    pub fn list_bots(&self) -> Result<Vec<ResearchBot>, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, query, interval_mins, enabled, last_run_at, next_run_at, run_count, claims_found, created_at, max_sources_per_run, auto_ingest
+             FROM research_bots ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let enabled_int: i64 = row.get(4)?;
+            let auto_ingest_int: i64 = row.get(11)?;
+            let interval_mins_int: i64 = row.get(3)?;
+            let run_count_int: i64 = row.get(7)?;
+            let claims_found_int: i64 = row.get(8)?;
+            let max_sources_int: i64 = row.get(10)?;
+            Ok(ResearchBot {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                query: row.get(2)?,
+                interval_mins: interval_mins_int as u32,
+                enabled: enabled_int == 1,
+                last_run_at: row.get(5)?,
+                next_run_at: row.get(6)?,
+                run_count: run_count_int as u64,
+                claims_found: claims_found_int as u64,
+                created_at: row.get(9)?,
+                max_sources_per_run: max_sources_int as usize,
+                auto_ingest: auto_ingest_int == 1,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    pub fn get_bot(&self, id: &str) -> Result<Option<ResearchBot>, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, query, interval_mins, enabled, last_run_at, next_run_at, run_count, claims_found, created_at, max_sources_per_run, auto_ingest
+             FROM research_bots WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            let enabled_int: i64 = row.get(4)?;
+            let auto_ingest_int: i64 = row.get(11)?;
+            let interval_mins_int: i64 = row.get(3)?;
+            let run_count_int: i64 = row.get(7)?;
+            let claims_found_int: i64 = row.get(8)?;
+            let max_sources_int: i64 = row.get(10)?;
+            Ok(ResearchBot {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                query: row.get(2)?,
+                interval_mins: interval_mins_int as u32,
+                enabled: enabled_int == 1,
+                last_run_at: row.get(5)?,
+                next_run_at: row.get(6)?,
+                run_count: run_count_int as u64,
+                claims_found: claims_found_int as u64,
+                created_at: row.get(9)?,
+                max_sources_per_run: max_sources_int as usize,
+                auto_ingest: auto_ingest_int == 1,
+            })
+        })?;
+        if let Some(r) = rows.next() {
+            Ok(Some(r?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_bot(&self, bot: &ResearchBot) -> Result<(), StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        conn.execute(
+            "UPDATE research_bots
+             SET name = ?1, query = ?2, interval_mins = ?3, enabled = ?4, last_run_at = ?5, next_run_at = ?6, run_count = ?7, claims_found = ?8, max_sources_per_run = ?9, auto_ingest = ?10
+             WHERE id = ?11",
+            params![
+                bot.name.trim(),
+                bot.query.trim(),
+                bot.interval_mins as i64,
+                if bot.enabled { 1 } else { 0 },
+                bot.last_run_at,
+                bot.next_run_at,
+                bot.run_count as i64,
+                bot.claims_found as i64,
+                bot.max_sources_per_run as i64,
+                if bot.auto_ingest { 1 } else { 0 },
+                bot.id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_bot(&self, id: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let count = conn.execute("DELETE FROM research_bots WHERE id = ?1", params![id])?;
+        Ok(count > 0)
+    }
+
+    pub fn due_bots(&self) -> Result<Vec<ResearchBot>, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut stmt = conn.prepare(
+            "SELECT id, name, query, interval_mins, enabled, last_run_at, next_run_at, run_count, claims_found, created_at, max_sources_per_run, auto_ingest
+             FROM research_bots
+             WHERE enabled = 1 AND (next_run_at IS NULL OR next_run_at <= ?1)
+             ORDER BY next_run_at ASC",
+        )?;
+        let rows = stmt.query_map(params![now], |row| {
+            let enabled_int: i64 = row.get(4)?;
+            let auto_ingest_int: i64 = row.get(11)?;
+            let interval_mins_int: i64 = row.get(3)?;
+            let run_count_int: i64 = row.get(7)?;
+            let claims_found_int: i64 = row.get(8)?;
+            let max_sources_int: i64 = row.get(10)?;
+            Ok(ResearchBot {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                query: row.get(2)?,
+                interval_mins: interval_mins_int as u32,
+                enabled: enabled_int == 1,
+                last_run_at: row.get(5)?,
+                next_run_at: row.get(6)?,
+                run_count: run_count_int as u64,
+                claims_found: claims_found_int as u64,
+                created_at: row.get(9)?,
+                max_sources_per_run: max_sources_int as usize,
+                auto_ingest: auto_ingest_int == 1,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    pub fn record_bot_run(&self, run: &BotRunRecord) -> Result<(), StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        conn.execute(
+            "INSERT INTO bot_runs (id, bot_id, started_at, finished_at, urls_checked, claims_added, error_msg, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                run.id,
+                run.bot_id,
+                run.started_at,
+                run.finished_at,
+                run.urls_checked as i64,
+                run.claims_added as i64,
+                run.error_msg,
+                run.status
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_bot_runs(
+        &self,
+        bot_id: &str,
+        limit: usize,
+    ) -> Result<Vec<BotRunRecord>, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, bot_id, started_at, finished_at, urls_checked, claims_added, error_msg, status
+             FROM bot_runs
+             WHERE bot_id = ?1
+             ORDER BY started_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![bot_id, limit as i64], |row| {
+            let urls: i64 = row.get(4)?;
+            let claims: i64 = row.get(5)?;
+            Ok(BotRunRecord {
+                id: row.get(0)?,
+                bot_id: row.get(1)?,
+                started_at: row.get(2)?,
+                finished_at: row.get(3)?,
+                urls_checked: urls as usize,
+                claims_added: claims as usize,
+                error_msg: row.get(6)?,
+                status: row.get(7)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    pub fn has_document(&self, canonical_url: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM documents WHERE canonical_url = ?1",
+            params![canonical_url],
+            |r| r.get(0),
+        )?;
+        Ok(count > 0)
+    }
 }
 
 fn upsert_claim(conn: &Connection, claim: &NewClaim, now: &str) -> Result<(), rusqlite::Error> {
@@ -958,5 +1263,67 @@ mod tests {
             store.resolve_claim_id("sha256:claim-"),
             Err(StoreError::AmbiguousClaim(_))
         ));
+    }
+
+    #[test]
+    fn research_bots_lifecycle_and_due() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("bald.db")).unwrap();
+
+        let new_bot = NewResearchBot {
+            name: "Monitor CBDC".to_string(),
+            query: "cyfrowe euro cbdc".to_string(),
+            interval_mins: 60,
+            max_sources_per_run: Some(4),
+            auto_ingest: Some(true),
+        };
+        let bot = store.create_bot(&new_bot).unwrap();
+        assert_eq!(bot.name, "Monitor CBDC");
+        assert_eq!(bot.interval_mins, 60);
+        assert!(bot.enabled);
+        assert_eq!(bot.run_count, 0);
+
+        let list = store.list_bots().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, bot.id);
+
+        let due = store.due_bots().unwrap();
+        assert_eq!(due.len(), 1);
+
+        // Record a run
+        let run = BotRunRecord {
+            id: Uuid::new_v4().to_string(),
+            bot_id: bot.id.clone(),
+            started_at: "2026-01-01T00:00:00Z".to_string(),
+            finished_at: "2026-01-01T00:00:05Z".to_string(),
+            urls_checked: 3,
+            claims_added: 2,
+            error_msg: None,
+            status: "success".to_string(),
+        };
+        store.record_bot_run(&run).unwrap();
+
+        let runs = store.list_bot_runs(&bot.id, 10).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].claims_added, 2);
+
+        // Update bot
+        let mut updated = bot.clone();
+        updated.enabled = false;
+        updated.claims_found = 2;
+        updated.run_count = 1;
+        store.update_bot(&updated).unwrap();
+
+        let fetched = store.get_bot(&bot.id).unwrap().unwrap();
+        assert!(!fetched.enabled);
+        assert_eq!(fetched.claims_found, 2);
+
+        // Not due anymore because enabled=false
+        let due_now = store.due_bots().unwrap();
+        assert_eq!(due_now.len(), 0);
+
+        // Delete bot
+        assert!(store.delete_bot(&bot.id).unwrap());
+        assert!(store.list_bots().unwrap().is_empty());
     }
 }

@@ -231,3 +231,37 @@ export interface SearchWebResponse {
   latency_ms: number;
 }
 
+export interface ResearchBot {
+  id: string;
+  name: string;
+  query: string;
+  interval_mins: number;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  run_count: number;
+  claims_found: number;
+  created_at: string;
+  max_sources_per_run: number;
+  auto_ingest: boolean;
+}
+
+export interface NewResearchBot {
+  name: string;
+  query: string;
+  interval_mins: number;
+  max_sources_per_run?: number;
+  auto_ingest?: boolean;
+}
+
+export interface BotRunRecord {
+  id: string;
+  bot_id: string;
+  started_at: string;
+  finished_at: string;
+  urls_checked: number;
+  claims_added: number;
+  error_msg?: string | null;
+  status: string;
+}
+

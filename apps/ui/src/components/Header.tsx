@@ -1,8 +1,8 @@
-import { Languages, MessageSquareText, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
+import { Bot, Languages, MessageSquareText, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
 
-export type Screen = 'chat' | 'claims' | 'settings';
+export type Screen = 'chat' | 'claims' | 'bots' | 'settings';
 
 export function Header({
   screen,
@@ -69,6 +69,19 @@ export function Header({
           >
             <Sparkles className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{t('nav.claims')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigate('bots')}
+            className={cn(
+              'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition',
+              screen === 'bots'
+                ? 'bg-amber-400/10 text-amber-200'
+                : 'text-slate-500 hover:bg-white/[0.04] hover:text-slate-300',
+            )}
+          >
+            <Bot className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t('nav.bots')}</span>
           </button>
           <button
             type="button"

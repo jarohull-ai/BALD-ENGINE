@@ -20,4 +20,7 @@ pub use settings::{
     SettingsView,
 };
 
-pub use bse_store::{ClaimDetail, ClaimSummary, EntityItem, EvidenceItem, LedgerStats};
+pub use bse_store::{
+    BotRunRecord, ClaimDetail, ClaimSummary, EntityItem, EvidenceItem, LedgerStats, NewResearchBot,
+    ResearchBot,
+};

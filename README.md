@@ -35,6 +35,8 @@ Działa:
 - **Lokalne Web UI (`bald serve`)**: nowoczesny interfejs React + TypeScript + Tailwind + Lucide
   wbudowany bezpośrednio w plik binarny `bald`. Uruchamia się na `http://127.0.0.1:7333` z zabezpieczeniem tokenem
   sesyjnym przeciwko CSRF. Działa na każdym systemie bez wymogu instalacji WebKitGTK.
+- **Asystent Czat & Wyszukiwarka Sieciowa w UI**: badanie źródeł 1-kliknięciem, weryfikacja cytatów w czasie rzeczywistym i eksport raportów dowodowych do Markdown / PDF.
+- **Bot Researcher (Autonomiczny monitoring tematów)**: konfigurowalne boty badawcze działające cyklicznie w tle, automatycznie przeszukujące sieć (SearXNG/Brave) i zasilające Evidence Ledger nowo zweryfikowanymi twierdzeniami.
 - **Tauri 2**: desktop shell podłączony do tego samego serwisu API przez IPC.
 
 Zapytania `Allow` są zapisywane lokalnie w SQLite (surowy tekst + hash) na potrzeby

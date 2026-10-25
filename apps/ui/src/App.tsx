@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchClaims } from './api';
+import { BotsView } from './components/BotsView';
 import { ChatView } from './components/ChatView';
 import { ClaimDrawer } from './components/ClaimDrawer';
 import { ClaimsView } from './components/ClaimsView';
@@ -77,6 +78,8 @@ export default function App() {
               onOpen={setSelected}
             />
           </div>
+        ) : screen === 'bots' ? (
+          <BotsView />
         ) : (
           <SettingsView />
         )}

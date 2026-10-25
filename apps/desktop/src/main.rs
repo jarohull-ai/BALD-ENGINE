@@ -1,8 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bse_api::{
-    ChatRequest, ChatResponse, ClaimDetail, ClaimsResponse, DiscoveryResponse, IngestResponse,
-    LedgerStats, SearchWebResponse, Service, SettingsUpdate, SettingsView,
+    BotRunRecord, ChatRequest, ChatResponse, ClaimDetail, ClaimsResponse, DiscoveryResponse,
+    IngestResponse, LedgerStats, NewResearchBot, ResearchBot, SearchWebResponse, Service,
+    SettingsUpdate, SettingsView,
 };
 
 struct AppState {
@@ -93,6 +94,47 @@ async fn search_web(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn bots_list(state: tauri::State<'_, AppState>) -> Result<Vec<ResearchBot>, String> {
+    state.service.list_bots().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn bot_create(
+    state: tauri::State<'_, AppState>,
+    request: NewResearchBot,
+) -> Result<ResearchBot, String> {
+    state.service.create_bot(request).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn bot_update(state: tauri::State<'_, AppState>, bot: ResearchBot) -> Result<(), String> {
+    state.service.update_bot(bot).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn bot_delete(state: tauri::State<'_, AppState>, id: String) -> Result<bool, String> {
+    state.service.delete_bot(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn bot_run_now(state: tauri::State<'_, AppState>, id: String) -> Result<BotRunRecord, String> {
+    state
+        .service
+        .execute_bot(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn bot_runs_list(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    limit: usize,
+) -> Result<Vec<BotRunRecord>, String> {
+    state.service.list_bot_runs(&id, limit).map_err(|e| e.to_string())
+}
+
 fn main() {
     let service = Service::open().expect("cannot open BALD service");
 
@@ -107,7 +149,13 @@ fn main() {
             discover_models,
             chat,
             ingest_evidence,
-            search_web
+            search_web,
+            bots_list,
+            bot_create,
+            bot_update,
+            bot_delete,
+            bot_run_now,
+            bot_runs_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running BALD desktop");

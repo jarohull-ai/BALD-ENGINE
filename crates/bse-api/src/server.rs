@@ -28,7 +28,7 @@ use crate::service::{
     ServiceError,
 };
 use crate::settings::{SettingsError, SettingsUpdate, SettingsView};
-use bse_store::{ClaimDetail, LedgerStats};
+use bse_store::{BotRunRecord, ClaimDetail, LedgerStats, NewResearchBot, ResearchBot};
 
 static EMBEDDED_UI: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../apps/ui/dist");
 
@@ -130,7 +130,7 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
         ui_dir: options.ui_dir,
         ui_mode,
     };
-    let app = router(state);
+    let app = router(state.clone());
     let listener = TcpListener::bind(options.bind)
         .await
         .with_context(|| format!("cannot bind {}", options.bind))?;
@@ -138,8 +138,13 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
 
     println!("BALD UI · http://{address}/");
     println!("UI assets: {ui_mode}");
-    println!("API: /api/health · /api/claims · /api/settings");
+    println!("API: /api/health · /api/claims · /api/settings · /api/bots");
     println!("Naciśnij Ctrl+C, aby zatrzymać.");
+
+    let bg_service = state.service.clone();
+    tokio::spawn(async move {
+        bot_scheduler_loop(bg_service).await;
+    });
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -158,6 +163,13 @@ fn router(state: AppState) -> Router {
         .route("/chat", axum::routing::post(chat_post))
         .route("/evidence/ingest", axum::routing::post(ingest_post))
         .route("/search", get(search_get).post(search_post))
+        .route("/bots", get(bots_list).post(bots_create))
+        .route(
+            "/bots/{id}",
+            get(bot_get).put(bot_update).delete(bot_delete),
+        )
+        .route("/bots/{id}/run", axum::routing::post(bot_run))
+        .route("/bots/{id}/runs", get(bot_runs_list))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()
@@ -286,6 +298,95 @@ async fn search_post(
         .await
         .map(Json)
         .map_err(ApiError::from)
+}
+
+async fn bots_list(State(state): State<AppState>) -> Result<Json<Vec<ResearchBot>>, ApiError> {
+    let list = state.service.list_bots().map_err(ApiError::from)?;
+    Ok(Json(list))
+}
+
+async fn bots_create(
+    State(state): State<AppState>,
+    Json(payload): Json<NewResearchBot>,
+) -> Result<Json<ResearchBot>, ApiError> {
+    let bot = state.service.create_bot(payload).map_err(ApiError::from)?;
+    Ok(Json(bot))
+}
+
+async fn bot_get(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ResearchBot>, ApiError> {
+    let bot = state.service.get_bot(&id).map_err(ApiError::from)?;
+    Ok(Json(bot))
+}
+
+async fn bot_update(
+    State(state): State<AppState>,
+    AxumPath(_id): AxumPath<String>,
+    Json(bot): Json<ResearchBot>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state.service.update_bot(bot).map_err(ApiError::from)?;
+    Ok(Json(json!({ "status": "updated" })))
+}
+
+async fn bot_delete(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let deleted = state.service.delete_bot(&id).map_err(ApiError::from)?;
+    Ok(Json(json!({ "deleted": deleted })))
+}
+
+async fn bot_run(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<BotRunRecord>, ApiError> {
+    let run = state
+        .service
+        .execute_bot(&id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(run))
+}
+
+async fn bot_runs_list(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Vec<BotRunRecord>>, ApiError> {
+    let runs = state
+        .service
+        .list_bot_runs(&id, 50)
+        .map_err(ApiError::from)?;
+    Ok(Json(runs))
+}
+
+async fn bot_scheduler_loop(service: Arc<Service>) {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        if let Ok(due_bots) = service.due_bots() {
+            for bot in due_bots {
+                println!(
+                    "🤖 Bot Researcher: uruchamiam automatyczne badanie dla bota '{}' (id: {})",
+                    bot.name, bot.id
+                );
+                match service.execute_bot(&bot.id).await {
+                    Ok(run) => {
+                        println!(
+                            "🤖 Bot Researcher: zakończono przebieg '{}': status {}, zbadano {} URL, dodano {} twierdzeń",
+                            bot.name, run.status, run.urls_checked, run.claims_added
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "🤖 Bot Researcher: błąd wykonania bota '{}': {}",
+                            bot.name, e
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn require_token(State(state): State<AppState>, request: Request, next: Next) -> Response {

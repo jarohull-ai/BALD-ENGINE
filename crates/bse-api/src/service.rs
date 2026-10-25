@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 use bse_classify::{
     Classifier, ClassifyOptions, FallbackClassifier, HeuristicClassifier, LlmClassifier,
@@ -18,7 +19,10 @@ use bse_guard::{AuditLog, RulesGate};
 use bse_llm::{Llm, LlmClient, LlmProvider, LlmSettings};
 use bse_pipeline::{domain_of, EvidenceOptions, EvidencePipeline, SearchEngine, SearchOptions};
 use bse_providers::{BraveProvider, DemoProvider, SearxngProvider};
-use bse_store::{ClaimDetail, ClaimSummary, LedgerStats, RunStore, Store, StoreError};
+use bse_store::{
+    BotRunRecord, ClaimDetail, ClaimSummary, LedgerStats, NewResearchBot, ResearchBot, RunStore,
+    Store, StoreError,
+};
 
 use crate::settings::{self, SettingsError, SettingsUpdate, SettingsView};
 
@@ -495,6 +499,125 @@ impl Service {
             latency_ms: report.latency_ms,
         })
     }
+
+    pub fn list_bots(&self) -> Result<Vec<ResearchBot>, ServiceError> {
+        Ok(self.store.list_bots()?)
+    }
+
+    pub fn create_bot(&self, req: NewResearchBot) -> Result<ResearchBot, ServiceError> {
+        if req.name.trim().is_empty() {
+            return Err(ServiceError::Pipeline(
+                "Nazwa bota nie może być pusta".to_string(),
+            ));
+        }
+        if req.query.trim().is_empty() {
+            return Err(ServiceError::Pipeline(
+                "Fraza wyszukiwania nie może być pusta".to_string(),
+            ));
+        }
+        Ok(self.store.create_bot(&req)?)
+    }
+
+    pub fn get_bot(&self, id: &str) -> Result<ResearchBot, ServiceError> {
+        self.store
+            .get_bot(id)?
+            .ok_or_else(|| ServiceError::NotFound(format!("Bot {id} nie został znaleziony")))
+    }
+
+    pub fn update_bot(&self, bot: ResearchBot) -> Result<(), ServiceError> {
+        Ok(self.store.update_bot(&bot)?)
+    }
+
+    pub fn delete_bot(&self, id: &str) -> Result<bool, ServiceError> {
+        Ok(self.store.delete_bot(id)?)
+    }
+
+    pub fn list_bot_runs(
+        &self,
+        bot_id: &str,
+        limit: usize,
+    ) -> Result<Vec<BotRunRecord>, ServiceError> {
+        Ok(self.store.list_bot_runs(bot_id, limit.clamp(1, 100))?)
+    }
+
+    pub fn due_bots(&self) -> Result<Vec<ResearchBot>, ServiceError> {
+        Ok(self.store.due_bots()?)
+    }
+
+    pub async fn execute_bot(&self, bot_id: &str) -> Result<BotRunRecord, ServiceError> {
+        let mut bot = self
+            .store
+            .get_bot(bot_id)?
+            .ok_or_else(|| ServiceError::NotFound(format!("Bot {bot_id} nie został znaleziony")))?;
+
+        let started_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut urls_checked = 0;
+        let mut claims_added = 0;
+        let mut error_msg = None;
+        let status;
+
+        match self.search_web(&bot.query, bot.max_sources_per_run).await {
+            Ok(search_resp) => {
+                if search_resp.guard_refused {
+                    error_msg = search_resp.guard_message;
+                    status = "refused".to_string();
+                } else {
+                    for hit in search_resp.hits {
+                        // Skip if already in database
+                        if let Ok(true) = self.store.has_document(&hit.url) {
+                            continue;
+                        }
+                        urls_checked += 1;
+                        if bot.auto_ingest {
+                            match self.ingest(&hit.url).await {
+                                Ok(ingest_resp) => {
+                                    claims_added += ingest_resp.claims_accepted;
+                                }
+                                Err(e) => {
+                                    if error_msg.is_none() {
+                                        error_msg =
+                                            Some(format!("Błąd badania {}: {}", hit.url, e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    status = if error_msg.is_some() && claims_added == 0 && urls_checked > 0 {
+                        "partial".to_string()
+                    } else {
+                        "success".to_string()
+                    };
+                }
+            }
+            Err(e) => {
+                error_msg = Some(e.to_string());
+                status = "failed".to_string();
+            }
+        }
+
+        let finished_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let run_record = BotRunRecord {
+            id: Uuid::new_v4().to_string(),
+            bot_id: bot.id.clone(),
+            started_at,
+            finished_at,
+            urls_checked,
+            claims_added,
+            error_msg,
+            status,
+        };
+
+        self.store.record_bot_run(&run_record)?;
+
+        bot.run_count += 1;
+        bot.claims_found += claims_added as u64;
+        bot.last_run_at = Some(run_record.started_at.clone());
+        let next_run = Utc::now() + chrono::Duration::minutes(bot.interval_mins as i64);
+        bot.next_run_at = Some(next_run.to_rfc3339_opts(SecondsFormat::Millis, true));
+        self.store.update_bot(&bot)?;
+
+        Ok(run_record)
+    }
 }
 
 fn build_search_providers(cfg: &Config) -> Vec<Arc<dyn Provider>> {
@@ -779,6 +902,44 @@ mod tests {
         assert!(!resp.guard_refused);
         // Returns results from Demo fixtures if SearXNG/Brave are not running
         assert!(!resp.hits.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn bot_researcher_lifecycle_and_execution() {
+        let (dir, path) = temp_config();
+        let service = Service::open_at(path).expect("service");
+
+        let bot = service
+            .create_bot(NewResearchBot {
+                name: "Test Bot CBDC".to_string(),
+                query: "cyfrowe euro".to_string(),
+                interval_mins: 120,
+                max_sources_per_run: Some(2),
+                auto_ingest: Some(false),
+            })
+            .expect("create bot");
+
+        assert_eq!(bot.name, "Test Bot CBDC");
+        assert_eq!(bot.interval_mins, 120);
+
+        let bots = service.list_bots().expect("list bots");
+        assert_eq!(bots.len(), 1);
+
+        let run = service.execute_bot(&bot.id).await.expect("execute bot");
+        assert_eq!(run.bot_id, bot.id);
+        assert_eq!(run.status, "success");
+
+        let runs = service.list_bot_runs(&bot.id, 10).expect("list runs");
+        assert_eq!(runs.len(), 1);
+
+        let updated_bot = service.get_bot(&bot.id).expect("get bot");
+        assert_eq!(updated_bot.run_count, 1);
+        assert!(updated_bot.last_run_at.is_some());
+
+        assert!(service.delete_bot(&bot.id).expect("delete bot"));
+        assert!(service.list_bots().expect("list bots").is_empty());
+
         let _ = std::fs::remove_dir_all(dir);
     }
 }

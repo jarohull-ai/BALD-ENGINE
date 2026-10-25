@@ -19,6 +19,22 @@ export function formatDate(iso: string, lang: 'pl' | 'en'): string {
   }
 }
 
+export function formatTimestamp(iso: string, lang: 'pl' | 'en' = 'pl'): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  try {
+    return new Intl.DateTimeFormat(lang === 'pl' ? 'pl-PL' : 'en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 16).replace('T', ' ');
+  }
+}
+
 export function shortId(id: string): string {
   const raw = id.replace(/^sha256:/, '');
   return raw.slice(0, 12);
