@@ -11,7 +11,7 @@ lecz suwerenny **rejestr dowodowy (evidence ledger)**: dokument + tier źródła
 
 > „Temat tak, osoba nie.”
 
-## Status: faza 1 (rdzeń; UI w fazie 2)
+## Status: faza 2 (rdzeń + evidence ledger; UI w fazie 3)
 
 Działa:
 
@@ -26,15 +26,21 @@ Działa:
 - **Store**: SQLite + migracje, runy, dokumenty, dedupe po kanonicznym URL.
 - **Fuzja**: RRF (k=60) + kanonizacja URL + usuwanie parametrów śledzących + near-duplicate
   (MinHash/LSH) + metryka różnorodności domen.
+- **Ekstrakcja twierdzeń**: `bald evidence add/list/show/stats`; Ollama
+  (`/api/chat`) lub OpenAI-compatible (`/chat/completions`), deterministyczny fallback
+  `heuristic-v1`, stance `reports/endorses/debunks/mentions`, encje tylko nie-osobowe.
+- **Evidence ledger**: SQLite `claims`/`evidence`/`entities`; do bazy trafia wyłącznie
+  twierdzenie z cytatem potwierdzonym przez `CitationGate` (exact/normalized) i mającym
+  min. 24 znaki. Odrzucone twierdzenia są tylko w raporcie.
 - **Tauri shell**: statyczny UI w `apps/desktop` (wymaga WebKitGTK; patrz README).
 
 Zapytania `Allow` są zapisywane lokalnie w SQLite (surowy tekst + hash) na potrzeby
 historii; zapytania `Refuse/Review` nie są zapisywane, tylko hashowane w audit logu.
 Cache i indeks są lokalne, z uprawnieniami `0700/0600` na Unixie.
 
-Jeszcze nie ma: LLM/ekstrakcji twierdzeń, walidacji cytowań w UI, grafu narracji,
-diffów archiwum, Leptosa podłączonego do backendu, własnego crawlera, harmonogramu
-odświeżania, renderowania JavaScript (Playwright/render API) i Tor/onion.
+Jeszcze nie ma: podłączonego UI/Leptosa, grafu narracji, diffów archiwum, własnego
+crawlera, harmonogramu odświeżania, renderowania JavaScript (Playwright/render API),
+embeddingów/HNSW i Tor/onion.
 
 ## Szybki start
 
@@ -53,7 +59,18 @@ cargo run -p bse-cli -- fetch https://example.com
 cargo run -p bse-cli -- index add https://example.com
 cargo run -p bse-cli -- index search "documentation examples"
 cargo run -p bse-cli -- index stats
+
+# ekstrakcja twierdzeń i lokalny evidence ledger
+cargo run -p bse-cli -- evidence add https://example.com --offline
+cargo run -p bse-cli -- evidence list
+cargo run -p bse-cli -- evidence show 5d6e309d   # pełny claim_id lub jednoznaczny prefiks
+cargo run -p bse-cli -- evidence stats
+cargo run -p bse-cli -- audit verify
 ```
+
+`evidence add` domyślnie używa Ollamy, a gdy ta nie odpowiada — heurystyki. `--offline`
+wymusza deterministyczny klasyfikator bez sieci. `--json` daje pełny raport, w tym
+twierdzenia odrzucone przez bramkę cytatu.
 
 `fetch` i `index add` zapisują wyekstrahowany dokument do cache; kolejne wywołanie
 z tym samym URL-em korzysta z cache do `fetch.cache_ttl_secs`. `index add` indeksuje
@@ -66,7 +83,7 @@ cargo run -p bse-cli -- config init
 cargo run -p bse-cli -- config path
 ```
 
-Ścieżki i limity fetchu są w `config.toml`:
+Ścieżki, limity fetchu i konfiguracja LLM są w `config.toml`:
 
 ```toml
 [storage]
@@ -80,10 +97,28 @@ max_bytes = 2097152
 timeout_secs = 20
 max_redirects = 5
 respect_robots = true
+
+[llm]
+provider = "ollama"                # ollama | openai | none
+fallback_provider = "heuristic"    # none | heuristic | ollama | openai
+base_url = "http://127.0.0.1:11434"
+model = "llama3.1:8b"
+api_key_env = "OLLAMA_API_KEY"     # klucz tylko z env, nigdy z TOML
+fallback_base_url = "https://api.openai.com/v1"
+fallback_model = "gpt-4o-mini"
+fallback_api_key_env = "OPENAI_API_KEY"
+timeout_secs = 60
+max_input_chars = 14000
+max_claims = 8
+max_attempts = 2
 ```
 
 Nadpisania: `BALD_INDEX_PATH`, `BALD_CACHE_DIR`, `BALD_FETCH_TIMEOUT_SECS`,
-`BALD_RESPECT_ROBOTS`.
+`BALD_RESPECT_ROBOTS`, `BALD_LLM_PROVIDER`, `BALD_LLM_BASE_URL`, `BALD_LLM_MODEL`,
+`BALD_LLM_TIMEOUT_SECS`, `BALD_LLM_MAX_INPUT_CHARS`, `BALD_LLM_MAX_CLAIMS`.
+Klucze LLM: `BALD_LLM_API_KEY` / `BALD_LLM_FALLBACK_API_KEY` albo zmienne wskazane
+przez `api_key_env` / `fallback_api_key_env`. Dla zdalnego endpointu wymagane jest
+HTTPS; `http` jest dozwolone tylko dla loopbacku.
 
 Domyślnie nic nie jest włączone poza `--demo`. Aby użyć SearXNG:
 
@@ -115,11 +150,14 @@ crates/
   bse-providers/  SearXNG, Brave, Demo
   bse-fetch/      HTTP+SSRF, robots.txt, cache, ekstrakcja treści
   bse-index/      Tantivy/BM25, upsert, lokalne wyszukiwanie
-  bse-pipeline/   guard → fan-out → kanonizacja → RRF → near-dedupe → store
+  bse-llm/        transport Ollama / OpenAI-compatible (bez logiki domenowej)
+  bse-classify/   ekstrakcja twierdzeń, stance, encje, filtry PII, fallback
+  bse-pipeline/   guard → fan-out → kanonizacja → RRF → near-dedupe → store;
+                  evidence: fetch → classify → CitationGate → ledger
   bse-cli/        binarka `bald`
 apps/desktop/     Tauri 2 shell (poza workspace, wymaga WebKitGTK)
-docs/adr/         ADR-005 (guard/audit), ADR-006 (fetch/indeks)
-PLAN.md           pełny plan architektury (v0.5, stan faz 0–1)
+docs/adr/         ADR-005 (guard/audit), ADR-006 (fetch/indeks), ADR-007 (LLM/claims)
+PLAN.md           pełny plan architektury (v0.6, stan faz 0–2)
 ```
 
 `seed-core/` i `jfp-edge-radar/` w katalogu projektu to **niezależne repo JFP**,
@@ -140,6 +178,21 @@ celowo poza workspace. Rdzeń BALD jest MIT i nie linkuje żadnego z nich.
   przechowywania treści i brak przypadkowego wykonywania skryptów; TTL domyślnie 1 h.
 - **Near-duplicate na snippetach** — MinHash/LSH (64 hashe, 16 pasm, próg 0,90)
   scala mirrory i kopie, ale nie krótkie snippety (< 8 tokenów).
+- **LLM nie zapisuje do bazy** — `bse-classify` tylko zwraca twierdzenia; dopiero
+  `EvidencePipeline` przepuszcza je przez `CitationGate` i zapisuje. Brak cytatu =
+  brak dowodu, nawet jeśli model „wie lepiej”.
+- **Cytat musi mieć min. 24 znaki** — krótkie fragmenty („The Great Reset”) są
+  odrzucane jako `quote_too_short`, bo nie dokumentują twierdzenia.
+- **Osoba nie jest encją** — dozwolone są organizacje, miejsca, wydarzenia, dokumenty,
+  technologie, prawo i dzieła; `person`/`public_actor`/`private_individual` są odrzucane.
+- **PII odrzuca twierdzenie** — e-mail, telefon-like 9–15 cyfr i 11-cyfrowy ID; nie
+  wycinamy fragmentu, tylko nie zapisujemy wpisu.
+- **`noindex` przed LLM** — lokalny ledger jest indeksem, więc źródło `noindex` jest
+  pomijane zanim trafi do modelu.
+- **Transport LLM osobno** — `bse-llm` waliduje endpoint (HTTPS poza loopbackiem),
+  blokuje credentiale w URL, proxy i redirecty; klucz tylko z env, błędy redagowane.
+- **Audyt bez treści** — `evidence.*` zapisuje hashe, model/prompt version, statusy
+  i liczby; nie zapisuje URL-i, twierdzeń, cytatów ani kluczy.
 - **seed-core tylko jako action gate (faza 3)** — nie klasyfikator zapytań i nie
   walidator cytowań; szczegóły i mapowanie `etm`/`lid` w `docs/adr/ADR-005-bse-guard.md`.
 - **jfp-edge-radar tylko ingress w daemonie** — nie egress SSRF; SSRF należy do
@@ -167,18 +220,27 @@ cargo test
 Zestaw obejmuje: 40 zapytań person-targeted i 40 benign (PL/EN/obfuskacja), walidację cytatów,
 tamper-detection audit logu, kanonizację URL, RRF/dedupe, near-duplicate MinHash/LSH,
 politykę SSRF, robots.txt, cache/TTL i uprawnienia plików, ekstrakcję HTML, SQLite,
-Tantivy upsert/search, parsery providerów oraz end-to-end demo przez pipeline.
+Tantivy upsert/search, parsery providerów, transport LLM, ekstrakcję twierdzeń i PII oraz
+end-to-end evidence ledger. Łącznie **93 testy**.
 
-## Ograniczenia fazy 1
+## Ograniczenia fazy 2
 
 - **Brak JavaScriptu** — strony renderowane po stronie klienta mogą dać pusty tekst;
   render API/Playwright jest opcjonalny w kolejnej fazie.
-- **Brak własnego crawlera i kolejki** — `index add` pobiera jeden URL na raz.
-- **Brak harmonogramu świeżości** — cache TTL i ręczne `index add`.
+- **Brak własnego crawlera i kolejki** — `index add` i `evidence add` pobierają jeden
+  URL na raz.
+- **Brak harmonogramu świeżości** — cache TTL i ręczne `evidence add`.
 - **Brak pomiaru p95 na żywym SearXNG/Brave** — mierzymy lokalny indeks i logujemy
   `latency_ms`; powtarzalny benchmark providerów wymaga stabilnego środowiska.
-- **UI nadal statyczne** — nie jest podłączone do backendu Rust/Leptosa.
-- **Brak HNSW/embeddingów** — w fazie 1 tylko BM25; semantyka w fazie 2+.
+- **UI nadal statyczne** — nie jest podłączone do backendu Rust/Leptosa ani do ledgera.
+- **Brak HNSW/embeddingów** — semantyka i klasteryzacja narracji w późniejszej fazie.
+- **CitationGate nie weryfikuje sensu** — potwierdza obecność cytatu w źródle, nie to,
+  że cytat w pełni uzasadnia parafrazę. Dlatego cytat jest zawsze pokazywany obok twierdzenia.
+- **Nazwy osób mogą zostać w cytacie** — jeśli są częścią opisywanego zdarzenia; nie
+  tworzą jednak encji osobowych ani profilu.
+- **Jakość lokalnego LLM** — `llama3.1:8b` bywa wolny i czasem zwraca niepoprawny JSON;
+  wtedy działa jawny fallback `heuristic-v1` (ostrzeżenie `primary_failed:*`). Heurystyka
+  nie czyści markerów cytowań (`[4]`) i bywa bardziej „dosłowna” niż model.
 
 ## Dokumentacja
 
@@ -187,6 +249,8 @@ Tantivy upsert/search, parsery providerów oraz end-to-end demo przez pipeline.
   audit chain, adapter seed-core, izolacja licencyjna.
 - [`docs/adr/ADR-006-fetch-index.md`](docs/adr/ADR-006-fetch-index.md) — granice fetch/indeks,
   SSRF, robots.txt, cache, ekstrakcja, BM25 i near-duplicate.
+- [`docs/adr/ADR-007-llm-classify.md`](docs/adr/ADR-007-llm-classify.md) — transport LLM,
+  ekstrakcja twierdzeń, stance, `CitationGate`, osoby/PII i evidence ledger.
 
 ## Licencja
 

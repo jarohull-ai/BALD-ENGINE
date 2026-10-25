@@ -7,7 +7,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+bse-classify.workspace = true
 bse-core.workspace = true
+bse-fetch.workspace = true
 bse-guard.workspace = true
 bse-store.workspace = true
 futures.workspace = true

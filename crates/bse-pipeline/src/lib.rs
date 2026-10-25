@@ -1,6 +1,12 @@
 //! Orkiestracja zapytania: guard → fan-out → kanonizacja → RRF → dedupe → store.
 
 mod dedupe;
+mod evidence;
+
+pub use evidence::{
+    AcceptedEvidence, EvidenceOptions, EvidencePipeline, EvidencePipelineError, EvidenceReport,
+    RejectedEvidence,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

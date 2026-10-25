@@ -234,15 +234,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "bse-classify"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bse-core",
+ "bse-guard",
+ "bse-llm",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "bse-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bse-classify",
  "bse-config",
  "bse-core",
  "bse-fetch",
  "bse-guard",
  "bse-index",
+ "bse-llm",
  "bse-pipeline",
  "bse-providers",
  "bse-store",
@@ -321,10 +338,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bse-llm"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "bse-pipeline"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bse-classify",
  "bse-core",
+ "bse-fetch",
  "bse-guard",
  "bse-providers",
  "bse-store",

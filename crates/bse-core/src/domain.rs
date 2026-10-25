@@ -55,13 +55,34 @@ pub enum Independence {
 }
 
 /// Stosunek źródła do twierdzenia. Wymagany dla każdego dowodu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stance {
     Reports,
     Endorses,
     Debunks,
     Mentions,
+}
+
+impl Stance {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stance::Reports => "reports",
+            Stance::Endorses => "endorses",
+            Stance::Debunks => "debunks",
+            Stance::Mentions => "mentions",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "reports" | "report" | "relates" | "relacjonuje" => Some(Stance::Reports),
+            "endorses" | "endorse" | "supports" | "popiera" => Some(Stance::Endorses),
+            "debunks" | "debunk" | "refutes" | "obala" => Some(Stance::Debunks),
+            "mentions" | "mention" | "wspomina" => Some(Stance::Mentions),
+            _ => None,
+        }
+    }
 }
 
 /// Stan dostępności treści — fundament warstwy „ocenzurowane informacje”.

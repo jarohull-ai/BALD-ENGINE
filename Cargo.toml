@@ -19,6 +19,8 @@ bse-providers = { path = "crates/bse-providers" }
 bse-pipeline = { path = "crates/bse-pipeline" }
 bse-fetch = { path = "crates/bse-fetch" }
 bse-index = { path = "crates/bse-index" }
+bse-llm = { path = "crates/bse-llm" }
+bse-classify = { path = "crates/bse-classify" }
 
 anyhow = "1"
 async-trait = "0.1"

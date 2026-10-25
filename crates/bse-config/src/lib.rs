@@ -45,6 +45,7 @@ pub struct Config {
     pub fetch: FetchConfig,
     pub security: SecurityConfig,
     pub transport: TransportConfig,
+    pub llm: LlmConfig,
     pub providers: ProvidersConfig,
 }
 
@@ -155,6 +156,74 @@ impl Default for TransportConfig {
             onion_index: false,
         }
     }
+}
+
+/// Konfiguracja ekstrakcji twierdzeń.
+///
+/// `provider`: `ollama` | `openai` | `none`.
+/// `fallback_provider`: `none` | `heuristic` | `ollama` | `openai`.
+/// Klucz API jest czytany wyłącznie ze zmiennej środowiskowej wskazanej przez
+/// `api_key_env` (albo `BALD_LLM_API_KEY`); nie jest zapisywany w TOML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmConfig {
+    pub provider: String,
+    pub fallback_provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key_env: String,
+    pub fallback_base_url: String,
+    pub fallback_model: String,
+    pub fallback_api_key_env: String,
+    pub timeout_secs: u64,
+    pub connect_timeout_secs: u64,
+    pub temperature: f32,
+    pub max_tokens: u32,
+    pub max_input_chars: usize,
+    pub max_claims: usize,
+    pub max_attempts: usize,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            provider: "ollama".to_string(),
+            fallback_provider: "heuristic".to_string(),
+            base_url: "http://127.0.0.1:11434".to_string(),
+            model: "llama3.1:8b".to_string(),
+            api_key_env: "OLLAMA_API_KEY".to_string(),
+            fallback_base_url: "https://api.openai.com/v1".to_string(),
+            fallback_model: "gpt-4o-mini".to_string(),
+            fallback_api_key_env: "OPENAI_API_KEY".to_string(),
+            timeout_secs: 60,
+            connect_timeout_secs: 5,
+            temperature: 0.1,
+            max_tokens: 1200,
+            max_input_chars: 14_000,
+            max_claims: 8,
+            max_attempts: 2,
+        }
+    }
+}
+
+impl LlmConfig {
+    pub fn api_key(&self) -> Option<String> {
+        read_secret("BALD_LLM_API_KEY").or_else(|| read_secret(&self.api_key_env))
+    }
+
+    pub fn fallback_api_key(&self) -> Option<String> {
+        read_secret("BALD_LLM_FALLBACK_API_KEY").or_else(|| read_secret(&self.fallback_api_key_env))
+    }
+}
+
+fn read_secret(name: &str) -> Option<String> {
+    if name.trim().is_empty() {
+        return None;
+    }
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -270,6 +339,81 @@ impl Config {
         }
         if let Ok(v) = std::env::var("BALD_TOR") {
             self.transport.tor = parse_bool(&v).unwrap_or(self.transport.tor);
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_PROVIDER") {
+            if !v.trim().is_empty() {
+                self.llm.provider = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_FALLBACK_PROVIDER") {
+            if !v.trim().is_empty() {
+                self.llm.fallback_provider = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_BASE_URL") {
+            if !v.trim().is_empty() {
+                self.llm.base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_MODEL") {
+            if !v.trim().is_empty() {
+                self.llm.model = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_API_KEY_ENV") {
+            if !v.trim().is_empty() {
+                self.llm.api_key_env = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_FALLBACK_BASE_URL") {
+            if !v.trim().is_empty() {
+                self.llm.fallback_base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_FALLBACK_MODEL") {
+            if !v.trim().is_empty() {
+                self.llm.fallback_model = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_FALLBACK_API_KEY_ENV") {
+            if !v.trim().is_empty() {
+                self.llm.fallback_api_key_env = v;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_TIMEOUT_SECS") {
+            if let Ok(secs) = v.trim().parse::<u64>() {
+                self.llm.timeout_secs = secs;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_CONNECT_TIMEOUT_SECS") {
+            if let Ok(secs) = v.trim().parse::<u64>() {
+                self.llm.connect_timeout_secs = secs;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_TEMPERATURE") {
+            if let Ok(value) = v.trim().parse::<f32>() {
+                self.llm.temperature = value;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_MAX_TOKENS") {
+            if let Ok(value) = v.trim().parse::<u32>() {
+                self.llm.max_tokens = value;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_MAX_INPUT_CHARS") {
+            if let Ok(value) = v.trim().parse::<usize>() {
+                self.llm.max_input_chars = value;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_MAX_CLAIMS") {
+            if let Ok(value) = v.trim().parse::<usize>() {
+                self.llm.max_claims = value;
+            }
+        }
+        if let Ok(v) = std::env::var("BALD_LLM_MAX_ATTEMPTS") {
+            if let Ok(value) = v.trim().parse::<usize>() {
+                self.llm.max_attempts = value;
+            }
         }
     }
 
@@ -406,6 +550,23 @@ tor = false                  # v1.1, opt-in
 tor_socks = "127.0.0.1:9050"
 onion_index = false
 
+[llm]
+provider = "ollama"          # ollama | openai | none
+fallback_provider = "heuristic"  # none | heuristic | ollama | openai
+base_url = "http://127.0.0.1:11434"
+model = "llama3.1:8b"
+api_key_env = "OLLAMA_API_KEY"   # klucz czytany tylko z env
+fallback_base_url = "https://api.openai.com/v1"
+fallback_model = "gpt-4o-mini"
+fallback_api_key_env = "OPENAI_API_KEY"
+timeout_secs = 60
+connect_timeout_secs = 5
+temperature = 0.1
+max_tokens = 1200
+max_input_chars = 14000
+max_claims = 8
+max_attempts = 2
+
 [providers.searxng]
 enabled = false
 base_url = "http://127.0.0.1:8080"
@@ -429,6 +590,8 @@ mod tests {
         assert_eq!(cfg.storage.backend, "sqlite");
         assert!(cfg.storage.index_path.ends_with("index"));
         assert_eq!(cfg.fetch.max_redirects, 5);
+        assert_eq!(cfg.llm.provider, "ollama");
+        assert_eq!(cfg.llm.fallback_provider, "heuristic");
         assert!(!cfg.providers.any_enabled());
     }
 

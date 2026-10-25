@@ -4,6 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use bse_classify::{
+    Classifier, ClassifyOptions, FallbackClassifier, HeuristicClassifier, LlmClassifier,
+};
 use bse_config::{config_path, expand_tilde, write_sample, Config};
 use bse_core::{Gate, GateCtx, GateDecision, Lang, Provider, SearchReport};
 use bse_fetch::FetchCache;
@@ -11,16 +14,20 @@ use bse_fetch::{FetchError, FetchOptions, FetchedDocument, Fetcher};
 use bse_guard::audit::subject_query;
 use bse_guard::{sha256_prefixed, AuditLog, CitationGate, CitationStatus, RulesGate};
 use bse_index::{DocumentIndex, IndexDocument};
-use bse_pipeline::{domain_of, SearchEngine, SearchOptions};
+use bse_llm::{LlmClient, LlmProvider, LlmSettings};
+use bse_pipeline::{
+    domain_of, EvidenceOptions, EvidencePipeline, EvidencePipelineError, EvidenceReport,
+    SearchEngine, SearchOptions,
+};
 use bse_providers::{BraveProvider, DemoProvider, SearxngProvider};
-use bse_store::{RunStore, Store};
+use bse_store::{ClaimDetail, ClaimSummary, LedgerStats, RunStore, Store};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
     name = "bald",
     version,
-    about = "BALD — wyszukiwarka twierdzeń i narracji (faza 0)"
+    about = "BALD — wyszukiwarka twierdzeń, narracji i dowodów (faza 2)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -57,6 +64,11 @@ enum Command {
     Index {
         #[command(subcommand)]
         command: IndexCommand,
+    },
+    /// Evidence ledger: ekstrakcja twierdzeń, stance i cytatów.
+    Evidence {
+        #[command(subcommand)]
+        command: EvidenceCommand,
     },
     /// Konfiguracja lokalna.
     Config {
@@ -190,6 +202,42 @@ enum IndexCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum EvidenceCommand {
+    /// Pobierz źródło, wyekstrahuj twierdzenia i zapisz tylko zweryfikowane cytaty.
+    Add {
+        url: String,
+        #[arg(long)]
+        no_cache: bool,
+        /// Wymuś deterministyczny klasyfikator regułowy (bez Ollama/API).
+        #[arg(long)]
+        offline: bool,
+        #[arg(long, value_enum, default_value_t = LangArg::Auto)]
+        lang: LangArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lista twierdzeń w ledgerze.
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Pokaż twierdzenie, jego źródła, stance i encje.
+    Show {
+        /// Pełny claim_id albo jednoznaczny prefiks.
+        claim_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Statystyki evidence ledger.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ConfigCommand {
     /// Zapisz przykładowy plik konfiguracji.
     Init {
@@ -221,6 +269,7 @@ async fn run() -> Result<ExitCode> {
         Command::Providers { command } => providers(command),
         Command::Fetch(args) => fetch(args).await,
         Command::Index { command } => index(command).await,
+        Command::Evidence { command } => evidence(command).await,
         Command::Config { command } => config(command),
     }
 }
@@ -557,6 +606,25 @@ fn providers(command: ProvidersCommand) -> Result<ExitCode> {
                     Some(k) if !k.trim().is_empty() => "set",
                     _ => "missing",
                 }
+            );
+            println!(
+                "{:<10} {:<8} {} · model={} · key={}",
+                "llm",
+                cfg.llm.provider,
+                cfg.llm.base_url,
+                cfg.llm.model,
+                if cfg.llm.api_key().is_some() {
+                    "set"
+                } else {
+                    "not-needed/missing"
+                }
+            );
+            println!(
+                "{:<10} {:<8} {} · model={}",
+                "fallback",
+                cfg.llm.fallback_provider,
+                cfg.llm.fallback_base_url,
+                cfg.llm.fallback_model
             );
             println!();
             println!("config: {}", config_path().display());
@@ -941,6 +1009,369 @@ fn index_stats(json: bool) -> Result<ExitCode> {
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+async fn evidence(command: EvidenceCommand) -> Result<ExitCode> {
+    match command {
+        EvidenceCommand::Add {
+            url,
+            no_cache,
+            offline,
+            lang,
+            json,
+        } => evidence_add(url, no_cache, offline, lang.into(), json).await,
+        EvidenceCommand::List { limit, json } => evidence_list(limit, json),
+        EvidenceCommand::Show { claim_id, json } => evidence_show(claim_id, json),
+        EvidenceCommand::Stats { json } => evidence_stats(json),
+    }
+}
+
+fn classify_options(cfg: &Config) -> ClassifyOptions {
+    ClassifyOptions {
+        max_input_chars: cfg.llm.max_input_chars.max(1_000),
+        max_claims: cfg.llm.max_claims.clamp(1, 50),
+        max_attempts: cfg.llm.max_attempts.clamp(1, 4),
+        min_confidence: 0.0,
+    }
+}
+
+fn classifier_backend(
+    cfg: &Config,
+    provider: &str,
+    base_url: &str,
+    model: &str,
+    api_key: Option<String>,
+) -> Result<Arc<dyn Classifier>> {
+    let provider = provider.trim().to_ascii_lowercase();
+    match provider.as_str() {
+        "none" | "heuristic" => Ok(Arc::new(HeuristicClassifier::new(classify_options(cfg)))),
+        "ollama" | "openai" => {
+            let provider = LlmProvider::parse(&provider)
+                .ok_or_else(|| anyhow::anyhow!("unknown LLM provider: {provider}"))?;
+            let settings = LlmSettings {
+                provider,
+                base_url: base_url.to_string(),
+                model: model.to_string(),
+                api_key,
+                timeout: Duration::from_secs(cfg.llm.timeout_secs.max(1)),
+                connect_timeout: Duration::from_secs(cfg.llm.connect_timeout_secs.max(1)),
+                temperature: cfg.llm.temperature,
+                max_tokens: cfg.llm.max_tokens.max(64),
+            };
+            let client = LlmClient::new(settings).context("invalid LLM configuration")?;
+            Ok(Arc::new(LlmClassifier::new(
+                Arc::new(client),
+                classify_options(cfg),
+            )))
+        }
+        other => bail!("unknown LLM provider: {other}"),
+    }
+}
+
+fn build_classifier(cfg: &Config, offline: bool) -> Result<Arc<dyn Classifier>> {
+    if offline {
+        return Ok(Arc::new(HeuristicClassifier::new(classify_options(cfg))));
+    }
+
+    let primary = classifier_backend(
+        cfg,
+        &cfg.llm.provider,
+        &cfg.llm.base_url,
+        &cfg.llm.model,
+        cfg.llm.api_key(),
+    )?;
+    if matches!(
+        cfg.llm.provider.trim().to_ascii_lowercase().as_str(),
+        "none" | "heuristic"
+    ) || cfg
+        .llm
+        .fallback_provider
+        .trim()
+        .eq_ignore_ascii_case("none")
+        || cfg
+            .llm
+            .fallback_provider
+            .trim()
+            .eq_ignore_ascii_case(&cfg.llm.provider)
+    {
+        return Ok(primary);
+    }
+
+    let fallback = classifier_backend(
+        cfg,
+        &cfg.llm.fallback_provider,
+        &cfg.llm.fallback_base_url,
+        &cfg.llm.fallback_model,
+        cfg.llm.fallback_api_key(),
+    )?;
+    Ok(Arc::new(FallbackClassifier::new(primary, fallback)))
+}
+
+fn open_evidence_store(cfg: &Config) -> Result<Arc<Store>> {
+    Ok(Arc::new(
+        Store::open(expand_tilde(&cfg.storage.path)).context("cannot open local store")?,
+    ))
+}
+
+async fn evidence_add(
+    raw_url: String,
+    no_cache: bool,
+    offline: bool,
+    lang: Lang,
+    json: bool,
+) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let audit =
+        AuditLog::open(expand_tilde(&cfg.security.audit_log)).context("cannot open audit log")?;
+    let fetcher = build_fetcher(&cfg, no_cache)?;
+    let classifier = build_classifier(&cfg, offline)?;
+    let store = open_evidence_store(&cfg)?;
+    let pipeline = EvidencePipeline::new(
+        fetcher,
+        classifier,
+        store,
+        audit,
+        EvidenceOptions::default(),
+    );
+
+    let report = match pipeline.ingest(&raw_url, lang).await {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("evidence add: {error}");
+            return Ok(match error {
+                EvidencePipelineError::Fetch(_) => ExitCode::from(2),
+                _ => ExitCode::FAILURE,
+            });
+        }
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_evidence_report(&report);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn evidence_list(limit: usize, json: bool) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let store = open_evidence_store(&cfg)?;
+    let claims = store
+        .list_claims(limit.clamp(1, 500))
+        .context("cannot read evidence ledger")?;
+    let stats = store
+        .ledger_stats()
+        .context("cannot read evidence ledger stats")?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "claims": claims,
+                "stats": stats,
+            }))?
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    println!(
+        "BALD evidence ledger · {} claims · {} evidence · {} entities",
+        stats.claims, stats.evidence, stats.entities
+    );
+    if claims.is_empty() {
+        println!();
+        println!("Brak twierdzeń. Użyj: bald evidence add <url>");
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!();
+    for (index, claim) in claims.iter().enumerate() {
+        print_claim_summary(index + 1, claim);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn evidence_show(claim_id: String, json: bool) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let store = open_evidence_store(&cfg)?;
+    let resolved = store
+        .resolve_claim_id(claim_id.trim())
+        .context("cannot resolve claim id")?
+        .ok_or_else(|| anyhow::anyhow!("claim not found: {claim_id}"))?;
+    let detail = store
+        .claim_detail(&resolved)
+        .context("cannot read claim")?
+        .ok_or_else(|| anyhow::anyhow!("claim not found: {claim_id}"))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&detail)?);
+    } else {
+        print_claim_detail(&detail);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn evidence_stats(json: bool) -> Result<ExitCode> {
+    let cfg = Config::load().context("cannot load config")?;
+    let store = open_evidence_store(&cfg)?;
+    let stats = store
+        .ledger_stats()
+        .context("cannot read evidence ledger stats")?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&stats)?);
+    } else {
+        print_ledger_stats(&stats);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_evidence_report(report: &EvidenceReport) {
+    println!(
+        "BALD evidence · {} · {} ms",
+        report.domain, report.latency_ms
+    );
+    println!("source:  {}", report.canonical_url);
+    if report.requested_url != report.canonical_url {
+        println!("request: {}", report.requested_url);
+    }
+    if report.title != report.canonical_url {
+        println!("title:   {}", report.title);
+    }
+    if let Some(reason) = &report.skipped {
+        println!("skipped: {reason}");
+    }
+    if !report.model.is_empty() {
+        println!(
+            "model:   {} (prompt {})",
+            report.model, report.prompt_version
+        );
+    }
+    println!(
+        "claims:  {} accepted, {} rejected",
+        report.accepted.len(),
+        report.rejected.len()
+    );
+    println!("content: {}", report.content_hash);
+
+    for (index, claim) in report.accepted.iter().enumerate() {
+        println!();
+        println!("[{}] {}", index + 1, claim.text);
+        println!(
+            "    stance: {} · kind: {} · confidence: {:.2}",
+            claim.stance.as_str(),
+            claim.kind.as_str(),
+            claim.confidence
+        );
+        println!("    quote: {}", claim.quote);
+        println!(
+            "    citation: {:?} {:.2} · quote {}",
+            claim.citation_status, claim.citation_score, claim.quote_hash
+        );
+        if !claim.entities.is_empty() {
+            let entities = claim
+                .entities
+                .iter()
+                .map(|entity| format!("{} ({})", entity.name, entity.kind.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("    entities: {entities}");
+        }
+        println!("    claim_id: {}", claim.claim_id);
+    }
+
+    if !report.rejected.is_empty() {
+        println!();
+        println!("rejected:");
+        for claim in &report.rejected {
+            println!("  - {} ({})", claim.text, claim.reason);
+        }
+    }
+
+    for warning in &report.warnings {
+        println!("warning: {warning}");
+    }
+
+    if report.accepted.is_empty() {
+        println!();
+        println!("Nic nie zapisano: brak twierdzeń, które przeszły bramkę cytatu.");
+    } else {
+        println!();
+        println!(
+            "ledger: document={} claims={} evidence={} entities={}",
+            report.document_id.as_deref().unwrap_or("-"),
+            report.claims_stored,
+            report.evidence_stored,
+            report.entities_stored
+        );
+    }
+}
+
+fn print_claim_summary(index: usize, claim: &ClaimSummary) {
+    let stances = stance_summary(claim);
+    println!(
+        "{index}. [{:>2} docs · {:>2} evidence{stances}] {}",
+        claim.document_count, claim.evidence_count, claim.text
+    );
+    println!("    kind: {}", claim.kind.as_str());
+    println!("    id:   {}", claim.id);
+}
+
+fn stance_summary(claim: &ClaimSummary) -> String {
+    if claim.stances.is_empty() {
+        return String::new();
+    }
+    let counts = claim
+        .stances
+        .iter()
+        .map(|item| format!("{}={}", item.stance.as_str(), item.count))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(" · {counts}")
+}
+
+fn print_claim_detail(detail: &ClaimDetail) {
+    print_claim_summary(1, &detail.claim);
+    if !detail.entities.is_empty() {
+        let entities = detail
+            .entities
+            .iter()
+            .map(|entity| format!("{} ({})", entity.name, entity.kind.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("    entities: {entities}");
+    }
+    println!(
+        "    first: {} · last: {}",
+        detail.claim.first_seen, detail.claim.last_seen
+    );
+    println!();
+    println!("sources:");
+    for (index, item) in detail.evidence.iter().enumerate() {
+        println!(
+            "  {}. {} · {} · {:.2}",
+            index + 1,
+            item.stance.as_str(),
+            item.domain,
+            item.strength
+        );
+        println!("     {}", item.canonical_url);
+        if !item.title.is_empty() {
+            println!("     title: {}", item.title);
+        }
+        println!("     quote: {}", item.quote);
+        println!(
+            "     model: {} · prompt: {} · quote_hash: {}",
+            item.model_version, item.prompt_version, item.quote_hash
+        );
+        if let (Some(start), Some(end)) = (item.span_start, item.span_end) {
+            println!("     span: {start}..{end}");
+        }
+    }
+}
+
+fn print_ledger_stats(stats: &LedgerStats) {
+    println!("claims:   {}", stats.claims);
+    println!("evidence: {}", stats.evidence);
+    println!("entities: {}", stats.entities);
+    println!("sources:  {}", stats.documents_with_evidence);
 }
 
 fn decision_code(decision: GateDecision) -> &'static str {

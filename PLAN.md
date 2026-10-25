@@ -1,9 +1,9 @@
 # BALD SEARCH ENGINE — plan architektury
 
-**Wersja:** 0.5 (plan + fazy 0–1)
+**Wersja:** 0.6 (plan + fazy 0–2)
 **Data:** 2026-10-25
 **Stack:** Rust, desktop-first (Tauri), lokalny-first, chmura opcjonalna
-**Status:** fazy 0–1 zrealizowane dla rdzenia i CLI; shell Tauri przygotowany, build wymaga
+**Status:** fazy 0–2 zrealizowane dla rdzenia i CLI; shell Tauri przygotowany, build wymaga
 WebKitGTK; szczegóły decyzji w §16, stan implementacji w §19a
 
 **Decyzje zamykające v0.1:** Tauri · Leptos · bez własnego crawlera w v1 · PL+EN ·
@@ -21,6 +21,12 @@ audit hash chain oraz odłączony shell Tauri. Świadome odstępstwo: `rusqlite`
 ekstrakcja HTML/plain), `bse-index` (Tantivy/BM25, upsert), near-duplicate MinHash/LSH,
 metryka różnorodności domen, CLI `fetch`/`index`, ADR-006. MSRV podniesiony do 1.88
 (Tantivy 0.27).
+
+**Nowe w 0.6:** realizacja fazy 2 — `bse-llm` (Ollama/OpenAI-compatible, endpoint policy),
+`bse-classify` (twierdzenia, stance, encje nie-osobowe, PII, fallback `heuristic-v1`),
+evidence ledger w SQLite, `CitationGate` + minimalna długość cytatu, CLI
+`evidence add/list/show/stats`, ADR-007. Osoby nie są encjami; `noindex` jest pomijany
+przed LLM.
 
 ---
 
@@ -1119,6 +1125,10 @@ Razem: **8–9 tygodni** pracy jednej osoby bez fazy 7 (kalendarzowo więcej prz
 Kolejność faz 2–5 można przestawić; faza 0 i 1 są nienegocjowalne. Faza 7 jest opcjonalna i wchodzi
 po M4.
 
+**Stan realizacji:** fazy 0–2 są zamknięte dla rdzenia i CLI. Faza 2 dostarcza Ollamę i
+OpenAI-compatible, structured output, stance, `CitationGate` i ledger; pełny grading dowodów,
+UI i kaskada Rules→Llm w interfejsie pozostają w fazie 3.
+
 ### Kamienie milowe
 
 - **M1 (koniec fazy 1)**: „działa jak wyszukiwarka” — szybko, bez duplikatów, w pełni lokalnie.
@@ -1317,23 +1327,26 @@ bezpieczeństwa. Do tego licencje: seed-core non-commercial, edge-radar próg $1
 7. ~~**Faza 1**: `bse-fetch` z SSRF/robots/cache, `bse-index` z Tantivy, near-duplicate
    MinHash/LSH, metryka różnorodności i komendy `fetch`/`index`.~~ **Zrealizowane dla rdzenia/CLI**;
    render API i benchmark p95 na żywych providerach pozostają do fazy 2 — patrz §19a.
+8. ~~**Faza 2**: `bse-llm` + `bse-classify`, ekstrakcja twierdzeń/stance/encji, evidence ledger,
+   `CitationGate` dla każdego twierdzenia, CLI `evidence`, ADR-007.~~ **Zrealizowane dla
+   rdzenia/CLI**; UI, graf narracji i embeddingi pozostają — patrz §19a.
 
-Po fazach 0–1 wracamy do tego dokumentu z pierwszymi liczbami (latencja, koszt, jakość) i korygujemy
+Po fazach 0–2 wracamy do tego dokumentu z pierwszymi liczbami (latencja, koszt, jakość) i korygujemy
 roadmapę — plan bez pomiarów to hipoteza.
 
-### 19a. Stan faz 0–1 (2026-10-25)
+### 19a. Stan faz 0–2 (2026-10-25)
 
 - **Workspace:** `bse-core`, `bse-config`, `bse-guard`, `bse-store`, `bse-providers`,
-  `bse-fetch`, `bse-index`, `bse-pipeline`, `bse-cli`; `seed-core` i `jfp-edge-radar` poza
-  workspace. MSRV 1.88 (Tantivy 0.27).
+  `bse-fetch`, `bse-index`, `bse-llm`, `bse-classify`, `bse-pipeline`, `bse-cli`;
+  `seed-core` i `jfp-edge-radar` poza workspace. MSRV 1.88 (Tantivy 0.27).
 - **CLI `bald`:** `search`, `guard check`, `citation check`, `audit verify`, `providers list`,
-  `fetch`, `index add/search/stats`, `config init/path`; JSON, `--demo`, `--no-store`,
-  `--lang`, `--no-cache`.
+  `fetch`, `index add/search/stats`, `evidence add/list/show/stats`, `config init/path`;
+  JSON, `--demo`, `--no-store`, `--lang`, `--no-cache`, `--offline`.
 - **Guard:** deterministyczne reguły PL/EN + leetspeak; 40 person-targeted → 0 `Allow`,
   40 benign → 0 `Refuse`; `Review`/`Refuse` kończą CLI kodem 2. Guard działa też na
   `index search`.
 - **Audit:** SHA-256 JSONL hash chain, tamper detection, tylko hashe/kody; brak surowych PII.
-  `fetch` i `index` dopisują decyzje/refusal z hashem URL.
+  `fetch`, `index` i `evidence` dopisują decyzje/refusal z hashem URL/cytatów.
 - **Store:** SQLite (rusqlite), runy, dokumenty, dedupe po kanonicznym URL; zapisywane tylko `Allow`.
 - **Providerzy:** SearXNG JSON, Brave, Demo offline; fuzja RRF k=60.
 - **Fetch:** tylko HTTP/HTTPS na 80/443, bez credentiali i proxy; blokada loopback/private/
@@ -1349,13 +1362,26 @@ roadmapę — plan bez pomiarów to hipoteza.
 - **Dedupe/„suwerenność”:** RRF → near-duplicate MinHash/LSH (64 hashe, 16 pasm, próg 0,90;
   krótkie snippety < 8 tokenów bez scalania) → metryka znormalizowanej entropii domen;
   ostrzeżenia `single-source`/`low-diversity`.
+- **LLM:** `bse-llm` obsługuje Ollama `/api/chat` i OpenAI-compatible `/chat/completions`;
+  zdalny endpoint tylko HTTPS, `http` tylko loopback; bez credentiali w URL, bez proxy
+  i redirectów; limity 4 MiB/60 s; błędy redagowane i przycinane; klucz tylko z env.
+- **Klasyfikacja:** `claim-extract-v1`, strict JSON, jedna próba naprawy, fallback
+  `heuristic-v1`; stance `reports/endorses/debunks/mentions`; kind
+  `fact/causal/concealment/conspiracy/prophecy/other`; encje tylko nie-osobowe
+  (`person`/`public_actor`/`private_individual` odrzucane); PII odrzuca twierdzenie.
+- **Evidence ledger:** `claims`/`evidence`/`entities`/`claim_entities`; deterministyczne
+  `claim_id` i `entity_id`; unikalność `(claim_id, document_id, quote_hash)`; zapis tylko
+  po `CitationGate` (exact/normalized, Jaccard ≥ 0,92) i przy cytacie ≥ 24 znaki;
+  `quote_too_short` i odrzucone cytaty pozostają wyłącznie w raporcie; `noindex` pomijany
+  przed LLM; audyt bez surowych treści.
 - **Desktop:** odłączony crate Tauri 2 ze statycznym mockiem UI; build zablokowany do instalacji
   WebKitGTK (`apps/desktop/README.md`).
 - **Odstępstwa/ograniczenia:** `rusqlite` zamiast `sqlx` (mniejszy dependency surface,
   `RunStore` trait na przyszłość); brak JS-renderingu, crawlera i harmonogramu; brak pomiaru
-  p95 na żywych providerach; UI nie jest podłączone do backendu.
+  p95 na żywych providerach; UI nie jest podłączone do backendu; `CitationGate` nie weryfikuje
+  semantycznego poparcia twierdzenia; brak embeddingów.
 - **ADR:** `ADR-005-bse-guard.md` (bramki/audit), `ADR-006-fetch-index.md` (SSRF/robots/cache/
-  Tantivy/dedupe).
+  Tantivy/dedupe), `ADR-007-llm-classify.md` (transport LLM/claims/ledger).
 
 ---
 
@@ -1368,3 +1394,4 @@ roadmapę — plan bez pomiarów to hipoteza.
 | 0.3 | Transport Tor/onion (§3.5, D13), integracja seed-core i edge-radar z korektą zakresu (§3.6, D14–D16), `bse-guard`/`bse-transport`/`bse-gateway`, SSRF w `bse-fetch`, izolacja licencyjna JFP, roadmapa 8–9 tyg. |
 | 0.4 | Faza 0: workspace Rust, ADR-005, guard + citation gate + audit chain, SQLite, providerzy SearXNG/Brave/Demo, CLI `bald`, odłączony shell Tauri; `rusqlite` zamiast `sqlx`; stan w §19a. |
 | 0.5 | Faza 1: `bse-fetch` (SSRF+robots+cache+ekstrakcja), `bse-index` (Tantivy/BM25), near-duplicate MinHash/LSH, entropia domen, CLI `fetch`/`index add/search/stats`, ADR-006; MSRV 1.88; stan w §19a. |
+| 0.6 | Faza 2: `bse-llm` (Ollama/OpenAI-compatible, endpoint policy), `bse-classify` (claims/stance/encje/PII/fallback), evidence ledger SQLite, `CitationGate` + cytat ≥ 24 znaki, CLI `evidence add/list/show/stats`, ADR-007; stan w §19a. |
