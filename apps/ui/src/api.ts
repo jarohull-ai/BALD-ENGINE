@@ -1,6 +1,7 @@
 import type {
   ClaimDetail,
   ClaimsResponse,
+  DiscoveryResponse,
   SettingsUpdate,
   SettingsView,
 } from './types';
@@ -100,3 +101,11 @@ export async function saveSettings(update: SettingsUpdate): Promise<SettingsView
     body: JSON.stringify(update),
   });
 }
+
+export async function discoverModels(): Promise<DiscoveryResponse> {
+  if (isTauriRuntime()) {
+    return invoke<DiscoveryResponse>('discover_models');
+  }
+  return request<DiscoveryResponse>('/api/models/discover');
+}
+

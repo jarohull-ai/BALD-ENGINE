@@ -5,6 +5,7 @@ import {
   Check,
   Cloud,
   Cpu,
+  ExternalLink,
   Eye,
   EyeOff,
   KeyRound,
@@ -20,10 +21,10 @@ import {
   Trash2,
   Wifi,
 } from 'lucide-react';
-import { fetchSettings, saveSettings } from '../api';
+import { discoverModels, fetchSettings, saveSettings } from '../api';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
-import type { SettingsUpdate, SettingsView } from '../types';
+import type { DiscoveredEngine, SettingsUpdate, SettingsView } from '../types';
 import {
   Badge,
   CardShell,
@@ -309,6 +310,27 @@ export function SettingsView() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [discoveredEngines, setDiscoveredEngines] = useState<DiscoveredEngine[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryScanned, setDiscoveryScanned] = useState(false);
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+
+  const handleDiscover = useCallback(async () => {
+    setDiscovering(true);
+    try {
+      const resp = await discoverModels();
+      setDiscoveredEngines(resp.engines);
+    } catch {
+      setDiscoveredEngines([]);
+    } finally {
+      setDiscoveryScanned(true);
+      setDiscovering(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void handleDiscover();
+  }, [handleDiscover]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -626,6 +648,17 @@ export function SettingsView() {
                 onToggleShow={() => setShowBrave((value) => !value)}
                 disabled={!draft.braveEnabled}
               />
+              <div className="pt-1 text-right">
+                <a
+                  href="https://brave.com/search/api/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-cyan-400/80 transition-colors hover:text-cyan-300"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {t('settings.braveKeyLink')}
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -647,6 +680,117 @@ export function SettingsView() {
             </Badge>
           }
         />
+
+        {/* Auto-Discovery of Local AI Engines */}
+        <div className="mt-6 rounded-2xl border border-white/[0.08] bg-black/25 p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-xl border border-amber-400/20 bg-amber-400/10 text-amber-300">
+                <Cpu className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">
+                  {t('settings.discoveredTitle')}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {t('settings.discoveredHint')}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void handleDiscover()}
+              disabled={discovering}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-amber-400/30 hover:bg-white/[0.07] disabled:opacity-50"
+            >
+              {discovering ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5 text-amber-300" />}
+              {discovering ? t('settings.discovering') : t('settings.discoverModels')}
+            </button>
+          </div>
+
+          {selectionNotice && (
+            <div className="mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+              <Check className="h-3.5 w-3.5" />
+              {selectionNotice}
+            </div>
+          )}
+
+          <div className="mt-4">
+            {discoveredEngines.filter((e) => e.available).length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {discoveredEngines
+                  .filter((e) => e.available)
+                  .map((engine) => (
+                    <div
+                      key={engine.id}
+                      className="rounded-xl border border-emerald-400/20 bg-emerald-400/[0.04] p-3.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="relative flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                          </span>
+                          <span className="text-xs font-bold text-slate-200">{engine.name}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-slate-500">{engine.baseUrl}</span>
+                      </div>
+
+                      <div className="mt-2.5 flex flex-wrap gap-1.5">
+                        {engine.models.length > 0 ? (
+                          engine.models.map((model) => {
+                            const isCurrent =
+                              draft.llmBaseUrl === engine.baseUrl && draft.llmModel === model;
+                            return (
+                              <button
+                                key={model}
+                                type="button"
+                                onClick={() => {
+                                  update(
+                                    'llmProvider',
+                                    engine.providerType === 'ollama' ? 'ollama' : 'openai'
+                                  );
+                                  update('llmBaseUrl', engine.baseUrl);
+                                  update('llmModel', model);
+                                  setSelectionNotice(t('settings.selectedModel', { model }));
+                                  window.setTimeout(() => setSelectionNotice(null), 3500);
+                                }}
+                                className={cn(
+                                  'rounded-lg border px-2 py-1 font-mono text-[11px] transition',
+                                  isCurrent
+                                    ? 'border-amber-400/50 bg-amber-400/15 font-semibold text-amber-200 shadow-sm'
+                                    : 'border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-emerald-400/40 hover:bg-emerald-400/10 hover:text-emerald-200'
+                                )}
+                              >
+                                {model}
+                                {isCurrent && ' ✓'}
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <span className="text-[11px] text-slate-600">Brak pobranych modeli</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            ) : discoveryScanned ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                <span>{t('settings.noModelsFound')}</span>
+                <a
+                  href="https://ollama.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-medium text-emerald-400/80 hover:text-emerald-300"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {t('settings.ollamaDownloadLink')}
+                </a>
+              </div>
+            ) : null}
+          </div>
+        </div>
 
         <div className="mt-6 grid gap-4 xl:grid-cols-2">
           <div className="rounded-2xl border border-white/[0.07] bg-black/15 p-4">
@@ -780,6 +924,57 @@ export function SettingsView() {
                 />
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Browser-based keys and registration */}
+        <div className="mt-5 rounded-2xl border border-white/[0.07] bg-black/15 p-4 sm:p-5">
+          <div className="flex items-center gap-2">
+            <ExternalLink className="h-3.5 w-3.5 text-amber-300/80" />
+            <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">
+              {t('settings.browserLoginTitle')}
+            </h3>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+            {t('settings.browserLoginHint')}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2.5">
+            <a
+              href="https://openrouter.ai/keys"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-xs text-slate-200 transition hover:border-amber-400/40 hover:bg-amber-400/[0.05] hover:text-amber-300"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-300/70" />
+              {t('settings.openrouterKeyLink')}
+            </a>
+            <a
+              href="https://platform.openai.com/api-keys"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-xs text-slate-200 transition hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
+            >
+              <Bot className="h-3.5 w-3.5 text-slate-400" />
+              {t('settings.openaiKeyLink')}
+            </a>
+            <a
+              href="https://brave.com/search/api/"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-xs text-slate-200 transition hover:border-cyan-400/40 hover:bg-cyan-400/[0.05] hover:text-cyan-300"
+            >
+              <Cloud className="h-3.5 w-3.5 text-cyan-300/70" />
+              {t('settings.braveKeyLink')}
+            </a>
+            <a
+              href="https://ollama.com"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-xs text-slate-200 transition hover:border-emerald-400/40 hover:bg-emerald-400/[0.05] hover:text-emerald-300"
+            >
+              <Cpu className="h-3.5 w-3.5 text-emerald-300/70" />
+              {t('settings.ollamaDownloadLink')}
+            </a>
           </div>
         </div>
 

@@ -153,3 +153,17 @@ export interface SettingsUpdate {
   maxClaims?: number;
   maxAttempts?: number;
 }
+
+export interface DiscoveredEngine {
+  id: string;
+  name: string;
+  providerType: string;
+  baseUrl: string;
+  available: boolean;
+  models: string[];
+}
+
+export interface DiscoveryResponse {
+  engines: DiscoveredEngine[];
+}
+

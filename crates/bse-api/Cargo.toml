@@ -13,6 +13,7 @@ bse-config.workspace = true
 bse-store.workspace = true
 chrono.workspace = true
 include_dir = "0.7"
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

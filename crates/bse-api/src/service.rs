@@ -122,6 +122,10 @@ impl Service {
     pub fn config_path(&self) -> &PathBuf {
         &self.config_path
     }
+
+    pub async fn discover_models(&self) -> crate::discovery::DiscoveryResponse {
+        crate::discovery::discover_local_engines().await
+    }
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
+use crate::discovery::{discover_local_engines, DiscoveryResponse};
 use crate::service::{ClaimsResponse, Service, ServiceError};
 use crate::settings::{SettingsError, SettingsUpdate, SettingsView};
 use bse_store::{ClaimDetail, LedgerStats};
@@ -150,6 +151,7 @@ fn router(state: AppState) -> Router {
         .route("/claims/{id}", get(claim_detail))
         .route("/stats", get(stats))
         .route("/settings", get(settings_get).put(settings_put))
+        .route("/models/discover", get(models_discover))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()
@@ -206,6 +208,10 @@ async fn settings_put(
         .save_settings(update)
         .map_err(ApiError::from)?;
     Ok(Json(view))
+}
+
+async fn models_discover() -> Json<DiscoveryResponse> {
+    Json(discover_local_engines().await)
 }
 
 async fn require_token(State(state): State<AppState>, request: Request, next: Next) -> Response {

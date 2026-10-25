@@ -1,11 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bse_api::{
-    ClaimDetail, ClaimsResponse, LedgerStats, Service, SettingsUpdate, SettingsView,
+    ClaimDetail, ClaimsResponse, DiscoveryResponse, LedgerStats, Service, SettingsUpdate,
+    SettingsView,
 };
 
 struct AppState {
     service: Service,
+}
+
+#[tauri::command]
+async fn discover_models(
+    state: tauri::State<'_, AppState>,
+) -> Result<DiscoveryResponse, String> {
+    Ok(state.service.discover_models().await)
 }
 
 #[tauri::command]
@@ -58,7 +66,8 @@ fn main() {
             claim_detail,
             ledger_stats,
             get_settings,
-            save_settings
+            save_settings,
+            discover_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running BALD desktop");

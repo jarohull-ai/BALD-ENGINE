@@ -295,6 +295,7 @@ dependencies = [
  "bse-store",
  "chrono",
  "include_dir",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",

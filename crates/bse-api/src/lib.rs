@@ -4,10 +4,12 @@
 //! serwer z tokenem sesji, a `apps/desktop` mapuje te same metody na komendy
 //! Tauri. Dzięki temu UI ma jeden kontrakt danych w obu trybach.
 
+pub mod discovery;
 mod server;
 mod service;
 mod settings;
 
+pub use discovery::{discover_local_engines, DiscoveredEngine, DiscoveryResponse};
 pub use server::{serve, ServeOptions};
 pub use service::{ClaimsResponse, Service, ServiceError};
 pub use settings::{
