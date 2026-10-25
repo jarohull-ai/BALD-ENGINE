@@ -212,8 +212,9 @@ bald evidence stats [--json]
 Konfiguracja `[llm]` ma domyślnie Ollamę i heurystyczny fallback. Nadpisania
 środowiskowe: `BALD_LLM_PROVIDER`, `BALD_LLM_BASE_URL`, `BALD_LLM_MODEL`,
 `BALD_LLM_TIMEOUT_SECS`, `BALD_LLM_MAX_INPUT_CHARS`, `BALD_LLM_MAX_CLAIMS`,
-`BALD_LLM_FALLBACK_*`. Klucze: `BALD_LLM_API_KEY` / `BALD_LLM_FALLBACK_API_KEY`
-albo zmienne wskazane przez `*_api_key_env`.
+`BALD_LLM_FALLBACK_*`. Klucze: zmienne środowiskowe `BALD_LLM_API_KEY` / `BALD_LLM_FALLBACK_API_KEY`
+mają pierwszeństwo; od Fazy 3 dopuszczalne jest też bezpieczne zapisanie klucza w pliku `~/.config/bald/config.toml`
+(zapis atomowy przez plik tymczasowy z uprawnieniami `0600`), chroniąc poświadczenia przed innymi użytkownikami systemu.
 
 Audyt (`evidence.fetch`, `evidence.quote`, `evidence.citation`, `evidence.ingest`)
 zawiera wyłącznie:

@@ -1,8 +1,8 @@
 //! Konfiguracja BALD.
 //!
 //! Priorytet: wartości domyślne → plik TOML → zmienne środowiskowe.
-//! Klucze API mogą być w pliku (tryb lokalny), ale rekomendowane są zmienne
-//! środowiskowe; w fazie 3 dojdzie keyring.
+//! Klucze API mogą być w pliku (tryb lokalny, uprawnienia 0600), ale
+//! rekomendowane są zmienne środowiskowe; w kolejnej iteracji dojdzie keyring.
 
 use std::path::{Path, PathBuf};
 
@@ -162,8 +162,9 @@ impl Default for TransportConfig {
 ///
 /// `provider`: `ollama` | `openai` | `none`.
 /// `fallback_provider`: `none` | `heuristic` | `ollama` | `openai`.
-/// Klucz API jest czytany wyłącznie ze zmiennej środowiskowej wskazanej przez
-/// `api_key_env` (albo `BALD_LLM_API_KEY`); nie jest zapisywany w TOML.
+/// Klucz API jest najpierw czytany ze zmiennej środowiskowej wskazanej przez
+/// `api_key_env` (albo `BALD_LLM_API_KEY`). Opcjonalny klucz w TOML jest
+/// fallbackiem dla UI lokalnego i plik zawsze ma uprawnienia 0600.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
@@ -172,9 +173,13 @@ pub struct LlmConfig {
     pub base_url: String,
     pub model: String,
     pub api_key_env: String,
+    /// Lokalny fallback dla UI; env ma pierwszeństwo.
+    pub api_key: Option<String>,
     pub fallback_base_url: String,
     pub fallback_model: String,
     pub fallback_api_key_env: String,
+    /// Lokalny fallback dla UI; env ma pierwszeństwo.
+    pub fallback_api_key: Option<String>,
     pub timeout_secs: u64,
     pub connect_timeout_secs: u64,
     pub temperature: f32,
@@ -192,9 +197,11 @@ impl Default for LlmConfig {
             base_url: "http://127.0.0.1:11434".to_string(),
             model: "llama3.1:8b".to_string(),
             api_key_env: "OLLAMA_API_KEY".to_string(),
+            api_key: None,
             fallback_base_url: "https://api.openai.com/v1".to_string(),
             fallback_model: "gpt-4o-mini".to_string(),
             fallback_api_key_env: "OPENAI_API_KEY".to_string(),
+            fallback_api_key: None,
             timeout_secs: 60,
             connect_timeout_secs: 5,
             temperature: 0.1,
@@ -208,12 +215,23 @@ impl Default for LlmConfig {
 
 impl LlmConfig {
     pub fn api_key(&self) -> Option<String> {
-        read_secret("BALD_LLM_API_KEY").or_else(|| read_secret(&self.api_key_env))
+        read_secret("BALD_LLM_API_KEY")
+            .or_else(|| read_secret(&self.api_key_env))
+            .or_else(|| read_config_secret(self.api_key.as_deref()))
     }
 
     pub fn fallback_api_key(&self) -> Option<String> {
-        read_secret("BALD_LLM_FALLBACK_API_KEY").or_else(|| read_secret(&self.fallback_api_key_env))
+        read_secret("BALD_LLM_FALLBACK_API_KEY")
+            .or_else(|| read_secret(&self.fallback_api_key_env))
+            .or_else(|| read_config_secret(self.fallback_api_key.as_deref()))
     }
+}
+
+fn read_config_secret(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn read_secret(name: &str) -> Option<String> {
@@ -274,21 +292,66 @@ impl Config {
     /// Ładuje konfigurację z `BALD_CONFIG` albo domyślnej lokalizacji.
     /// Brak pliku = wartości domyślne (nie jest błędem).
     pub fn load() -> Result<Self, ConfigError> {
-        let path = config_path();
-        let mut cfg = if path.exists() {
-            let raw = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-                path: path.clone(),
-                source,
-            })?;
-            toml::from_str(&raw).map_err(|source| ConfigError::Parse {
-                path: path.clone(),
-                source,
-            })?
-        } else {
-            Config::default()
-        };
+        let mut cfg = Self::load_file()?;
         cfg.apply_env();
         Ok(cfg)
+    }
+
+    /// Ładuje wyłącznie plik TOML, bez nadpisań ze środowiska.
+    ///
+    /// Ta ścieżka jest używana przez lokalne UI, żeby zapis ustawień nie
+    /// utrwalał przypadkowo wartości pochodzących z env.
+    pub fn load_file() -> Result<Self, ConfigError> {
+        Self::load_from(&config_path())
+    }
+
+    pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
+        if !path.exists() {
+            return Ok(Config::default());
+        }
+        let raw = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        toml::from_str(&raw).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
+    /// Zapisuje konfigurację do `BALD_CONFIG` albo domyślnej lokalizacji.
+    pub fn save(&self) -> Result<(), ConfigError> {
+        self.save_to(&config_path())
+    }
+
+    /// Atomowy zapis z uprawnieniami 0600 (Unix).
+    pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
+        ensure_parent(path).map_err(|source| ConfigError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let raw = toml::to_string_pretty(self).map_err(|source| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(source),
+        })?;
+        let tmp = path.with_extension(format!("toml.tmp-{}", std::process::id()));
+        write_private(&tmp, &raw).map_err(|source| ConfigError::Write {
+            path: tmp.clone(),
+            source,
+        })?;
+        std::fs::rename(&tmp, path).map_err(|source| {
+            let _ = std::fs::remove_file(&tmp);
+            ConfigError::Write {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
     }
 
     pub fn apply_env(&mut self) {
@@ -555,10 +618,12 @@ provider = "ollama"          # ollama | openai | none
 fallback_provider = "heuristic"  # none | heuristic | ollama | openai
 base_url = "http://127.0.0.1:11434"
 model = "llama3.1:8b"
-api_key_env = "OLLAMA_API_KEY"   # klucz czytany tylko z env
+api_key_env = "OLLAMA_API_KEY"   # env ma pierwszeństwo
+# api_key = "..."               # opcjonalny fallback UI; plik ma 0600
 fallback_base_url = "https://api.openai.com/v1"
 fallback_model = "gpt-4o-mini"
 fallback_api_key_env = "OPENAI_API_KEY"
+# fallback_api_key = "..."
 timeout_secs = 60
 connect_timeout_secs = 5
 temperature = 0.1
@@ -600,5 +665,46 @@ mod tests {
         let p = expand_tilde("~/x/y.db");
         assert!(!p.to_string_lossy().contains('~'));
         assert!(p.ends_with("x/y.db"));
+    }
+
+    #[test]
+    fn save_and_load_without_env() {
+        let dir = std::env::temp_dir().join(format!(
+            "bald-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("config.toml");
+
+        let mut cfg = Config::default();
+        cfg.llm.api_key = Some("file-secret".to_string());
+        cfg.providers.brave.api_key = Some("brave-secret".to_string());
+        cfg.providers.searxng.enabled = true;
+        cfg.save_to(&path).expect("save");
+
+        let loaded = Config::load_from(&path).expect("load");
+        assert!(loaded.providers.searxng.enabled);
+        assert_eq!(loaded.llm.api_key.as_deref(), Some("file-secret"));
+        assert_eq!(
+            loaded.providers.brave.api_key.as_deref(),
+            Some("brave-secret")
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

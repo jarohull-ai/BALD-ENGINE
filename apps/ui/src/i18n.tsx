@@ -1,0 +1,385 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
+
+export type Lang = 'pl' | 'en';
+
+const pl = {
+  'brand.tagline': 'evidence ledger',
+  'nav.claims': 'Twierdzenia',
+  'nav.settings': 'Ustawienia',
+  'shell.local': 'local-first',
+  'shell.phase': 'faza 3',
+  'shell.guard': 'temat tak, osoba nie',
+  'shell.language': 'Język interfejsu',
+  'claims.eyebrow': 'rejestr twierdzeń i źródeł',
+  'claims.title': 'Twierdzenia, nie osoby.',
+  'claims.lede':
+    'Każdy kafel to twierdzenie znalezione w źródle. Rozwiń go, aby zobaczyć dosłowny cytat, stance i link do dokumentu. BALD nie ocenia prawdy — pokazuje, co zostało powiedziane i gdzie.',
+  'claims.refresh': 'Odśwież ledger',
+  'claims.search': 'Szukaj w twierdzeniach',
+  'claims.searchPlaceholder': 'temat, słowo, fragment claimu…',
+  'claims.kind': 'Rodzaj',
+  'claims.stance': 'Stance',
+  'claims.sort': 'Sortowanie',
+  'claims.allKinds': 'Wszystkie rodzaje',
+  'claims.allStances': 'Wszystkie stance',
+  'claims.sort.sources': 'Najwięcej źródeł',
+  'claims.sort.recent': 'Ostatnio widziane',
+  'claims.sort.newest': 'Najnowsze w ledgerze',
+  'claims.results': '{count} twierdzeń',
+  'claims.emptyTitle': 'Ledger jest jeszcze pusty',
+  'claims.emptyBody':
+    'Dodaj pierwsze źródło przez CLI. BALD pobierze stronę, wyekstrahuje twierdzenia i zapisze wyłącznie cytaty, które przeszły CitationGate.',
+  'claims.emptyCommand': 'bald evidence add https://example.com/artykul',
+  'claims.copy': 'Kopiuj komendę',
+  'claims.copied': 'Skopiowano',
+  'claims.noMatch': 'Brak twierdzeń dla tych filtrów.',
+  'claims.clearFilters': 'Wyczyść filtry',
+  'stats.claims': 'twierdzeń',
+  'stats.evidence': 'cytatów',
+  'stats.sources': 'źródeł',
+  'stats.entities': 'encji',
+  'card.sources': '{count} źródeł',
+  'card.citations': '{count} cytatów',
+  'card.lastSeen': 'ostatnio {date}',
+  'card.open': 'Otwórz dowód',
+  'card.noEntities': 'bez encji',
+  'stance.reports': 'relacjonuje',
+  'stance.endorses': 'popiera',
+  'stance.debunks': 'obala',
+  'stance.mentions': 'wspomina',
+  'kind.fact': 'fakt',
+  'kind.causal': 'przyczynowe',
+  'kind.concealment': 'ukrywanie',
+  'kind.conspiracy': 'spisek',
+  'kind.prophecy': 'proroctwo',
+  'kind.other': 'inne',
+  'detail.title': 'Dowód twierdzenia',
+  'detail.subtitle': 'Cytaty są dosłowne i zweryfikowane względem źródła.',
+  'detail.close': 'Zamknij',
+  'detail.verified': 'Cytat obecny w źródle',
+  'detail.verifiedBody':
+    'Każdy zapis przeszedł CitationGate przed trafieniem do ledgera. To potwierdza obecność cytatu, nie prawdziwość całego twierdzenia.',
+  'detail.quote': 'Cytat źródłowy',
+  'detail.copyQuote': 'Kopiuj cytat',
+  'detail.copied': 'Skopiowano',
+  'detail.openSource': 'Otwórz źródło',
+  'detail.entities': 'Encje nieosobowe',
+  'detail.noEntities': 'Brak encji. BALD nie zapisuje osób jako encji.',
+  'detail.claimId': 'ID twierdzenia',
+  'detail.model': 'model',
+  'detail.evidenceCount': '{count} niezależnych wpisów dowodowych',
+  'detail.strength': 'siła',
+  'detail.loading': 'Pobieram dowody…',
+  'detail.error': 'Nie udało się pobrać dowodów.',
+  'detail.emptyEvidence': 'Brak wpisów dowodowych.',
+  'settings.eyebrow': 'konfiguracja lokalna',
+  'settings.title': 'Providery i ekstrakcja',
+  'settings.lede':
+    'Ustawienia są zapisywane w lokalnym pliku 0600. Zmienne środowiskowe mają pierwszeństwo i są oznaczone poniżej.',
+  'settings.presets': 'Presety',
+  'settings.preset.local': 'Lokalnie',
+  'settings.preset.localBody': 'SearXNG + Ollama. Zero chmury.',
+  'settings.preset.cloud': 'Chmura',
+  'settings.preset.cloudBody': 'Brave + OpenAI-compatible.',
+  'settings.preset.rules': 'Tylko reguły',
+  'settings.preset.rulesBody': 'Heurystyka offline, bez modelu.',
+  'settings.preset.custom': 'Własne',
+  'settings.preset.customBody': 'Zostaw obecne wartości.',
+  'settings.providers': 'Wyszukiwanie źródeł',
+  'settings.providersBody':
+    'BALD nie ma własnego crawlera. Wyszukiwanie idzie przez metasearch albo API, a pobieranie przez politykę SSRF i robots.txt.',
+  'settings.searxng': 'SearXNG',
+  'settings.searxngBody': 'Lokalny lub własny metasearch. Domyślnie 127.0.0.1:8080.',
+  'settings.brave': 'Brave Search API',
+  'settings.braveBody': 'Chmurowy indeks. Wymaga klucza API.',
+  'settings.enabled': 'Włączony',
+  'settings.baseUrl': 'Adres bazowy',
+  'settings.language': 'Język',
+  'settings.anyLanguage': 'Z zapytania',
+  'settings.safesearch': 'Safesearch',
+  'settings.safesearch.off': 'wyłączony',
+  'settings.safesearch.moderate': 'umiarkowany',
+  'settings.safesearch.strict': 'ścisły',
+  'settings.country': 'Kraj',
+  'settings.countryPlaceholder': 'np. pl',
+  'settings.apiKey': 'Klucz API',
+  'settings.apiKeyConfigured': 'Klucz zapisany',
+  'settings.apiKeyPlaceholder': 'wklej nowy klucz…',
+  'settings.clearKey': 'Usuń klucz',
+  'settings.keyFromEnv': 'źródło: env',
+  'settings.keyFromConfig': 'źródło: config 0600',
+  'settings.keyMissing': 'brak klucza',
+  'settings.llm': 'Ekstrakcja twierdzeń',
+  'settings.llmBody':
+    'Ollama działa lokalnie. Endpoint zdalny wymaga HTTPS; HTTP jest dozwolone wyłącznie dla loopbacku.',
+  'settings.provider': 'Provider',
+  'settings.model': 'Model',
+  'settings.apiKeyEnv': 'Zmienna env klucza',
+  'settings.fallback': 'Fallback',
+  'settings.fallbackBody':
+    'Gdy primary zawiedzie, BALD może przejść na drugi model albo deterministyczną heurystykę offline.',
+  'settings.fallbackProvider': 'Provider fallbacku',
+  'settings.fallbackModel': 'Model fallbacku',
+  'settings.fallbackUrl': 'Adres fallbacku',
+  'settings.fallbackApiKeyEnv': 'Env klucza fallbacku',
+  'settings.timeout': 'Timeout (s)',
+  'settings.connectTimeout': 'Connect timeout (s)',
+  'settings.maxClaims': 'Maks. twierdzeń',
+  'settings.maxInput': 'Maks. znaków wejścia',
+  'settings.temperature': 'Temperatura',
+  'settings.maxTokens': 'Maks. tokenów',
+  'settings.save': 'Zapisz konfigurację',
+  'settings.saving': 'Zapisywanie…',
+  'settings.saved': 'Zapisano konfigurację',
+  'settings.unsaved': 'Niezapisane zmiany',
+  'settings.envNote':
+    'Env ma priorytet nad plikiem. Zmień wartości w środowisku, jeśli poniższe pola nie działają.',
+  'settings.securityNote':
+    'Klucze są zwracane do UI wyłącznie jako status. Nowy klucz jest wysyłany jednorazowo i zapisywany w pliku 0600.',
+  'settings.securityTitle': 'Klucze i prywatność',
+  'settings.securityBody':
+    'Nowy klucz jest wysyłany jednorazowo przez lokalne IPC/API i zapisywany w pliku 0600. UI nigdy nie otrzymuje zapisanego klucza z powrotem.',
+  'settings.configPath': 'Plik konfiguracji',
+  'settings.reload': 'Przeładuj',
+  'settings.error': 'Nie udało się zapisać ustawień.',
+  'settings.none': 'brak',
+  'settings.heuristic': 'heurystyka offline',
+  'settings.ollama': 'Ollama',
+  'settings.openai': 'OpenAI-compatible',
+  'settings.required': 'wymagane',
+  'settings.optional': 'opcjonalne',
+  'settings.advanced': 'Parametry zaawansowane',
+  'settings.identity': 'Tożsamość produktu',
+  'settings.identityBody':
+    'BALD zbiera twierdzenia i narracje. Person guard blokuje zapytania o osoby, a ledger nie przechowuje encji osobowych.',
+  'error.title': 'Nie udało się wczytać ledgera',
+  'error.retry': 'Spróbuj ponownie',
+  'loading': 'Wczytywanie…',
+  'footer.localOnly': 'Dane pozostają na tym komputerze.',
+  'footer.guard': 'temat tak · osoba nie',
+  'footer.version': 'BALD 0.1 · Phase 3',
+} as const;
+
+type MessageKey = keyof typeof pl;
+
+const en: Record<MessageKey, string> = {
+  'brand.tagline': 'evidence ledger',
+  'nav.claims': 'Claims',
+  'nav.settings': 'Settings',
+  'shell.local': 'local-first',
+  'shell.phase': 'phase 3',
+  'shell.guard': 'topic yes, person no',
+  'shell.language': 'Interface language',
+  'claims.eyebrow': 'claims and sources ledger',
+  'claims.title': 'Claims, not people.',
+  'claims.lede':
+    'Every tile is a claim found in a source. Expand it to see the verbatim quote, stance, and source link. BALD does not judge truth — it shows what was said and where.',
+  'claims.refresh': 'Refresh ledger',
+  'claims.search': 'Search claims',
+  'claims.searchPlaceholder': 'topic, word, claim fragment…',
+  'claims.kind': 'Kind',
+  'claims.stance': 'Stance',
+  'claims.sort': 'Sort',
+  'claims.allKinds': 'All kinds',
+  'claims.allStances': 'All stances',
+  'claims.sort.sources': 'Most sources',
+  'claims.sort.recent': 'Recently seen',
+  'claims.sort.newest': 'Newest in ledger',
+  'claims.results': '{count} claims',
+  'claims.emptyTitle': 'The ledger is empty',
+  'claims.emptyBody':
+    'Add a first source via the CLI. BALD will fetch the page, extract claims, and store only quotes that passed CitationGate.',
+  'claims.emptyCommand': 'bald evidence add https://example.com/article',
+  'claims.copy': 'Copy command',
+  'claims.copied': 'Copied',
+  'claims.noMatch': 'No claims match these filters.',
+  'claims.clearFilters': 'Clear filters',
+  'stats.claims': 'claims',
+  'stats.evidence': 'quotes',
+  'stats.sources': 'sources',
+  'stats.entities': 'entities',
+  'card.sources': '{count} sources',
+  'card.citations': '{count} quotes',
+  'card.lastSeen': 'last seen {date}',
+  'card.open': 'Open evidence',
+  'card.noEntities': 'no entities',
+  'stance.reports': 'reports',
+  'stance.endorses': 'endorses',
+  'stance.debunks': 'debunks',
+  'stance.mentions': 'mentions',
+  'kind.fact': 'fact',
+  'kind.causal': 'causal',
+  'kind.concealment': 'concealment',
+  'kind.conspiracy': 'conspiracy',
+  'kind.prophecy': 'prophecy',
+  'kind.other': 'other',
+  'detail.title': 'Claim evidence',
+  'detail.subtitle': 'Quotes are verbatim and verified against the source.',
+  'detail.close': 'Close',
+  'detail.verified': 'Quote present in source',
+  'detail.verifiedBody':
+    'Every record passed CitationGate before entering the ledger. This proves quote presence, not the truth of the whole claim.',
+  'detail.quote': 'Source quote',
+  'detail.copyQuote': 'Copy quote',
+  'detail.copied': 'Copied',
+  'detail.openSource': 'Open source',
+  'detail.entities': 'Non-person entities',
+  'detail.noEntities': 'No entities. BALD does not store people as entities.',
+  'detail.claimId': 'Claim ID',
+  'detail.model': 'model',
+  'detail.evidenceCount': '{count} independent evidence records',
+  'detail.strength': 'strength',
+  'detail.loading': 'Loading evidence…',
+  'detail.error': 'Could not load evidence.',
+  'detail.emptyEvidence': 'No evidence records.',
+  'settings.eyebrow': 'local configuration',
+  'settings.title': 'Providers and extraction',
+  'settings.lede':
+    'Settings are stored in a local 0600 file. Environment variables take precedence and are marked below.',
+  'settings.presets': 'Presets',
+  'settings.preset.local': 'Local',
+  'settings.preset.localBody': 'SearXNG + Ollama. No cloud.',
+  'settings.preset.cloud': 'Cloud',
+  'settings.preset.cloudBody': 'Brave + OpenAI-compatible.',
+  'settings.preset.rules': 'Rules only',
+  'settings.preset.rulesBody': 'Offline heuristics, no model.',
+  'settings.preset.custom': 'Custom',
+  'settings.preset.customBody': 'Keep current values.',
+  'settings.providers': 'Source search',
+  'settings.providersBody':
+    'BALD has no crawler. Search goes through metasearch or an API, and fetching goes through SSRF policy and robots.txt.',
+  'settings.searxng': 'SearXNG',
+  'settings.searxngBody': 'Local or self-hosted metasearch. Default 127.0.0.1:8080.',
+  'settings.brave': 'Brave Search API',
+  'settings.braveBody': 'Cloud index. Requires an API key.',
+  'settings.enabled': 'Enabled',
+  'settings.baseUrl': 'Base URL',
+  'settings.language': 'Language',
+  'settings.anyLanguage': 'From query',
+  'settings.safesearch': 'Safesearch',
+  'settings.safesearch.off': 'off',
+  'settings.safesearch.moderate': 'moderate',
+  'settings.safesearch.strict': 'strict',
+  'settings.country': 'Country',
+  'settings.countryPlaceholder': 'e.g. us',
+  'settings.apiKey': 'API key',
+  'settings.apiKeyConfigured': 'Key stored',
+  'settings.apiKeyPlaceholder': 'paste a new key…',
+  'settings.clearKey': 'Clear key',
+  'settings.keyFromEnv': 'source: env',
+  'settings.keyFromConfig': 'source: config 0600',
+  'settings.keyMissing': 'no key',
+  'settings.llm': 'Claim extraction',
+  'settings.llmBody':
+    'Ollama runs locally. Remote endpoints require HTTPS; HTTP is allowed only for loopback.',
+  'settings.provider': 'Provider',
+  'settings.model': 'Model',
+  'settings.apiKeyEnv': 'Key env variable',
+  'settings.fallback': 'Fallback',
+  'settings.fallbackBody':
+    'When the primary fails, BALD can fall back to another model or deterministic offline heuristics.',
+  'settings.fallbackProvider': 'Fallback provider',
+  'settings.fallbackModel': 'Fallback model',
+  'settings.fallbackUrl': 'Fallback URL',
+  'settings.fallbackApiKeyEnv': 'Fallback key env',
+  'settings.timeout': 'Timeout (s)',
+  'settings.connectTimeout': 'Connect timeout (s)',
+  'settings.maxClaims': 'Max claims',
+  'settings.maxInput': 'Max input chars',
+  'settings.temperature': 'Temperature',
+  'settings.maxTokens': 'Max tokens',
+  'settings.save': 'Save configuration',
+  'settings.saving': 'Saving…',
+  'settings.saved': 'Configuration saved',
+  'settings.unsaved': 'Unsaved changes',
+  'settings.envNote':
+    'Env overrides the file. Change environment values if the fields below have no effect.',
+  'settings.securityNote':
+    'Keys are returned to the UI only as status. A new key is sent once and stored in a 0600 file.',
+  'settings.securityTitle': 'Keys and privacy',
+  'settings.securityBody':
+    'A new key is sent once through local IPC/API and stored in a 0600 file. The UI never receives the stored key back.',
+  'settings.configPath': 'Config file',
+  'settings.reload': 'Reload',
+  'settings.error': 'Could not save settings.',
+  'settings.none': 'none',
+  'settings.heuristic': 'offline heuristic',
+  'settings.ollama': 'Ollama',
+  'settings.openai': 'OpenAI-compatible',
+  'settings.required': 'required',
+  'settings.optional': 'optional',
+  'settings.advanced': 'Advanced parameters',
+  'settings.identity': 'Product identity',
+  'settings.identityBody':
+    'BALD collects claims and narratives. The person guard blocks person queries, and the ledger stores no person entities.',
+  'error.title': 'Could not load the ledger',
+  'error.retry': 'Try again',
+  'loading': 'Loading…',
+  'footer.localOnly': 'Data stays on this computer.',
+  'footer.guard': 'topic yes · person no',
+  'footer.version': 'BALD 0.1 · Phase 3',
+};
+
+const messages: Record<Lang, Record<MessageKey, string>> = { pl, en };
+
+interface I18nValue {
+  lang: Lang;
+  setLang: (lang: Lang) => void;
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string;
+}
+
+const I18nContext = createContext<I18nValue | null>(null);
+
+function initialLang(): Lang {
+  try {
+    const stored = localStorage.getItem('bald.ui.lang');
+    if (stored === 'pl' || stored === 'en') return stored;
+  } catch {
+    // Storage can be unavailable in hardened webviews.
+  }
+  return 'pl';
+}
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [lang, setLangState] = useState<Lang>(initialLang);
+
+  const setLang = useCallback((next: Lang) => {
+    setLangState(next);
+    try {
+      localStorage.setItem('bald.ui.lang', next);
+    } catch {
+      // Ignore storage failures.
+    }
+  }, []);
+
+  const t = useCallback(
+    (key: MessageKey, vars?: Record<string, string | number>) => {
+      let value = messages[lang][key] ?? messages.pl[key] ?? key;
+      if (vars) {
+        for (const [name, replacement] of Object.entries(vars)) {
+          value = value.replaceAll(`{${name}}`, String(replacement));
+        }
+      }
+      return value;
+    },
+    [lang],
+  );
+
+  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+export function useI18n(): I18nValue {
+  const value = useContext(I18nContext);
+  if (!value) throw new Error('useI18n must be used inside I18nProvider');
+  return value;
+}
+
+export type { MessageKey };

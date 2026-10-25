@@ -1,10 +1,10 @@
 # BALD SEARCH ENGINE — plan architektury
 
-**Wersja:** 0.6 (plan + fazy 0–2)
+**Wersja:** 0.7 (plan + fazy 0–3)
 **Data:** 2026-10-25
-**Stack:** Rust, desktop-first (Tauri), lokalny-first, chmura opcjonalna
-**Status:** fazy 0–2 zrealizowane dla rdzenia i CLI; shell Tauri przygotowany, build wymaga
-WebKitGTK; szczegóły decyzji w §16, stan implementacji w §19a
+**Stack:** Rust, desktop-first (Tauri), web-first (`bald serve`), lokalny-first, chmura opcjonalna
+**Status:** fazy 0–3 zrealizowane; silnik, crawler, ledger, API Axum i frontend React działają w pełni;
+szczegóły decyzji w §16, stan implementacji w §19a
 
 **Decyzje zamykające v0.1:** Tauri · Leptos · bez własnego crawlera w v1 · PL+EN ·
 presety chmurowe + lokalne + „dodaj providera”.
@@ -27,6 +27,11 @@ metryka różnorodności domen, CLI `fetch`/`index`, ADR-006. MSRV podniesiony d
 evidence ledger w SQLite, `CitationGate` + minimalna długość cytatu, CLI
 `evidence add/list/show/stats`, ADR-007. Osoby nie są encjami; `noindex` jest pomijany
 przed LLM.
+
+**Nowe w 0.7:** realizacja fazy 3 — `bse-api` (serwis Axum na loopback `127.0.0.1:7333`, session token
+wstrzykiwany do HTML, CSP), `bald serve` (działa bez WebKitGTK bezpośrednio w przeglądarce),
+hybrydowy frontend React + TypeScript + Tailwind + Lucide w `apps/ui` (siatka claims, drawer dowodów,
+ustawienia), Tauri IPC bridge, atomowy zapis konfiguracji z uprawnieniami `0600`, ADR-008.
 
 ---
 
@@ -1395,3 +1400,4 @@ roadmapę — plan bez pomiarów to hipoteza.
 | 0.4 | Faza 0: workspace Rust, ADR-005, guard + citation gate + audit chain, SQLite, providerzy SearXNG/Brave/Demo, CLI `bald`, odłączony shell Tauri; `rusqlite` zamiast `sqlx`; stan w §19a. |
 | 0.5 | Faza 1: `bse-fetch` (SSRF+robots+cache+ekstrakcja), `bse-index` (Tantivy/BM25), near-duplicate MinHash/LSH, entropia domen, CLI `fetch`/`index add/search/stats`, ADR-006; MSRV 1.88; stan w §19a. |
 | 0.6 | Faza 2: `bse-llm` (Ollama/OpenAI-compatible, endpoint policy), `bse-classify` (claims/stance/encje/PII/fallback), evidence ledger SQLite, `CitationGate` + cytat ≥ 24 znaki, CLI `evidence add/list/show/stats`, ADR-007; stan w §19a. |
+| 0.7 | Faza 3: `bse-api` (Axum loopback, session token, CSP), `bald serve`, frontend React+Tailwind `apps/ui` (claims grid, evidence drawer, settings), Tauri IPC bridge, atomowy config 0600, ADR-008; stan w §19a. |

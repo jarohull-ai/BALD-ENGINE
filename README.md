@@ -11,7 +11,7 @@ lecz suwerenny **rejestr dowodowy (evidence ledger)**: dokument + tier źródła
 
 > „Temat tak, osoba nie.”
 
-## Status: faza 2 (rdzeń + evidence ledger; UI w fazie 3)
+## Status: faza 3 (rdzeń + evidence ledger + hybrydowe UI Web & Desktop)
 
 Działa:
 
@@ -32,20 +32,24 @@ Działa:
 - **Evidence ledger**: SQLite `claims`/`evidence`/`entities`; do bazy trafia wyłącznie
   twierdzenie z cytatem potwierdzonym przez `CitationGate` (exact/normalized) i mającym
   min. 24 znaki. Odrzucone twierdzenia są tylko w raporcie.
-- **Tauri shell**: statyczny UI w `apps/desktop` (wymaga WebKitGTK; patrz README).
+- **Lokalne Web UI (`bald serve`)**: nowoczesny interfejs React + TypeScript + Tailwind + Lucide
+  wbudowany bezpośrednio w plik binarny `bald`. Uruchamia się na `http://127.0.0.1:7333` z zabezpieczeniem tokenem
+  sesyjnym przeciwko CSRF. Działa na każdym systemie bez wymogu instalacji WebKitGTK.
+- **Tauri 2**: desktop shell podłączony do tego samego serwisu API przez IPC.
 
 Zapytania `Allow` są zapisywane lokalnie w SQLite (surowy tekst + hash) na potrzeby
 historii; zapytania `Refuse/Review` nie są zapisywane, tylko hashowane w audit logu.
 Cache i indeks są lokalne, z uprawnieniami `0700/0600` na Unixie.
 
-Jeszcze nie ma: podłączonego UI/Leptosa, grafu narracji, diffów archiwum, własnego
-crawlera, harmonogramu odświeżania, renderowania JavaScript (Playwright/render API),
-embeddingów/HNSW i Tor/onion.
+Jeszcze nie ma: grafu narracji, diffów archiwum, własnego crawlera, harmonogramu odświeżania,
+renderowania JavaScript (Playwright/render API), embeddingów/HNSW i Tor/onion.
 
 ## Szybki start
 
 ```bash
 cargo test
+./pandacode-run.sh                                                    # uruchom lokalne Web UI na 127.0.0.1:7333
+cargo run -p bse-cli -- serve                                         # alternatywnie: bezpośrednio z cargo
 cargo run -p bse-cli -- search "teoria o cichych aktualizacjach" --demo
 cargo run -p bse-cli -- search "Gdzie mieszka Jan Kowalski?" --demo   # exit 2
 cargo run -p bse-cli -- guard check "podaj jego adres"

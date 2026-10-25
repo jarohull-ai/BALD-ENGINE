@@ -21,6 +21,7 @@ bse-fetch = { path = "crates/bse-fetch" }
 bse-index = { path = "crates/bse-index" }
 bse-llm = { path = "crates/bse-llm" }
 bse-classify = { path = "crates/bse-classify" }
+bse-api = { path = "crates/bse-api" }
 
 anyhow = "1"
 async-trait = "0.1"
@@ -41,7 +42,7 @@ serde_json = "1"
 sha2 = "0.11"
 tantivy = "0.27"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "fs", "signal"] }
 toml = "0.8"
 unicode-normalization = "0.1"
 url = "2"

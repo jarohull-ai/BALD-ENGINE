@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+bse-api.workspace = true
 bse-classify.workspace = true
 bse-config.workspace = true
 bse-core.workspace = true

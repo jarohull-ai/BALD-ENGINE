@@ -10,6 +10,7 @@ authors = ["Jarosław Kuchta <jarohull@gmail.com>"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+bse-api = { path = "../../crates/bse-api" }
 tauri = { version = "2", features = [] }
 
 # Ten crate jest celowo poza workspace BALD: wymaga systemowego webkit2gtk.

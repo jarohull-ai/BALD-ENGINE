@@ -12,6 +12,9 @@ bald.toml
 .env
 .DS_Store
 Notatki.txt
+node_modules
+**/node_modules
+
 
 # Standalone repositories (maintained separately, excluded from workspace)
 /seed-core

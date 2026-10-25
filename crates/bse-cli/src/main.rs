@@ -1,9 +1,11 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use bse_api::ServeOptions;
 use bse_classify::{
     Classifier, ClassifyOptions, FallbackClassifier, HeuristicClassifier, LlmClassifier,
 };
@@ -27,7 +29,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "bald",
     version,
-    about = "BALD — wyszukiwarka twierdzeń, narracji i dowodów (faza 2)"
+    about = "BALD — wyszukiwarka twierdzeń, narracji i dowodów (faza 3)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -70,6 +72,8 @@ enum Command {
         #[command(subcommand)]
         command: EvidenceCommand,
     },
+    /// Uruchom lokalne UI web na 127.0.0.1 (bez Tauri/GTK).
+    Serve(ServeArgs),
     /// Konfiguracja lokalna.
     Config {
         #[command(subcommand)]
@@ -176,6 +180,16 @@ struct FetchArgs {
     json: bool,
 }
 
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// Adres loopback, np. 127.0.0.1:7333.
+    #[arg(long, default_value = "127.0.0.1:7333")]
+    bind: String,
+    /// Katalog z zbudowanym UI (dev). Bez tej flagi UI jest wbudowane w binarkę.
+    #[arg(long)]
+    ui_dir: Option<PathBuf>,
+}
+
 #[derive(Debug, Subcommand)]
 enum IndexCommand {
     /// Pobierz URL, wyekstrahuj treść i dodaj/zaktualizuj dokument w indeksie.
@@ -270,8 +284,40 @@ async fn run() -> Result<ExitCode> {
         Command::Fetch(args) => fetch(args).await,
         Command::Index { command } => index(command).await,
         Command::Evidence { command } => evidence(command).await,
+        Command::Serve(args) => serve(args).await,
         Command::Config { command } => config(command),
     }
+}
+
+async fn serve(args: ServeArgs) -> Result<ExitCode> {
+    let bind: SocketAddr = args
+        .bind
+        .parse()
+        .with_context(|| format!("invalid --bind address: {}", args.bind))?;
+    if !bind.ip().is_loopback() {
+        bail!("`bald serve` może bindować wyłącznie loopback, np. 127.0.0.1:7333");
+    }
+    let ui_dir = match args.ui_dir {
+        Some(path) => {
+            if !path.is_dir() {
+                bail!("--ui-dir nie jest katalogiem: {}", path.display());
+            }
+            Some(path)
+        }
+        None => None,
+    };
+    let token = std::env::var("BALD_UI_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    bse_api::serve(ServeOptions {
+        bind,
+        ui_dir,
+        token,
+    })
+    .await
+    .context("local UI server failed")?;
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn search(args: SearchArgs) -> Result<ExitCode> {
