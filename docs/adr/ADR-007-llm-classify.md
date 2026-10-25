@@ -286,9 +286,9 @@ Smoke (ręczny):
   audyt ważny, ~17 s.
 - Heurystyka na `https://en.wikipedia.org/wiki/Great_Reset` → 8 zaakceptowanych
   cytatów, encje nie-osobowe, brak surowych danych w audycie.
-- LLM na `Great Reset` → twierdzenia i cytaty, osoby odrzucone jako encje; jedno
-  twierdzenie z cytatem „The Great Reset” zostało odrzucone przez `quote_too_short`
-  po dodaniu bramki długości.
+- LLM na `Great Reset` → twierdzenia i cytaty, osoby odrzucone jako encje. Po dodaniu
+  bramki długości cytat „The Great Reset” (14 znaków) jest odrzucany jako
+  `quote_too_short`; pokrywa to test jednostkowy pipeline'u.
 
 `cargo fmt --all`, `cargo test --workspace`, `cargo clippy --workspace --all-targets
 -- -D warnings` i `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` przechodzą.
