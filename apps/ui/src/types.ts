@@ -167,3 +167,49 @@ export interface DiscoveryResponse {
   engines: DiscoveredEngine[];
 }
 
+export interface AcceptedClaimInfo {
+  claim_id: string;
+  text: string;
+  kind: string;
+  stance: string;
+  quote: string;
+  quote_hash: string;
+  confidence: number;
+}
+
+export interface IngestResponse {
+  url: string;
+  title: string;
+  domain: string;
+  claims_found: number;
+  claims_accepted: number;
+  claims_rejected: number;
+  accepted: AcceptedClaimInfo[];
+  generated_at: string;
+}
+
+export interface ChatMessageItem {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  isUrl?: boolean;
+  guardRefused?: boolean;
+  ingest?: IngestResponse;
+  matchingClaims?: ClaimSummary[];
+  createdAt: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  history?: Array<{ role: string; content: string }>;
+}
+
+export interface ChatResponse {
+  role: string;
+  content: string;
+  is_url: boolean;
+  guard_refused: boolean;
+  ingest?: IngestResponse;
+  matching_claims: ClaimSummary[];
+}
+

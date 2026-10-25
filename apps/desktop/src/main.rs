@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bse_api::{
-    ClaimDetail, ClaimsResponse, DiscoveryResponse, LedgerStats, Service, SettingsUpdate,
-    SettingsView,
+    ChatRequest, ChatResponse, ClaimDetail, ClaimsResponse, DiscoveryResponse, IngestResponse,
+    LedgerStats, Service, SettingsUpdate, SettingsView,
 };
 
 struct AppState {
@@ -56,6 +56,30 @@ fn save_settings(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn chat(
+    state: tauri::State<'_, AppState>,
+    request: ChatRequest,
+) -> Result<ChatResponse, String> {
+    state
+        .service
+        .chat(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn ingest_evidence(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> Result<IngestResponse, String> {
+    state
+        .service
+        .ingest(&url)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 fn main() {
     let service = Service::open().expect("cannot open BALD service");
 
@@ -67,7 +91,9 @@ fn main() {
             ledger_stats,
             get_settings,
             save_settings,
-            discover_models
+            discover_models,
+            chat,
+            ingest_evidence
         ])
         .run(tauri::generate_context!())
         .expect("error while running BALD desktop");

@@ -11,7 +11,10 @@ mod settings;
 
 pub use discovery::{discover_local_engines, DiscoveredEngine, DiscoveryResponse};
 pub use server::{serve, ServeOptions};
-pub use service::{ClaimsResponse, Service, ServiceError};
+pub use service::{
+    extract_url, AcceptedClaimInfo, ChatMessage, ChatRequest, ChatResponse, ClaimsResponse,
+    IngestResponse, Service, ServiceError,
+};
 pub use settings::{
     apply_update, view, BraveView, LlmView, SearxngView, SettingsError, SettingsUpdate,
     SettingsView,

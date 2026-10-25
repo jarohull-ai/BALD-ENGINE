@@ -116,6 +116,9 @@ impl LlmError {
 pub trait Llm: Send + Sync {
     fn model(&self) -> &str;
     async fn complete(&self, system: &str, user: &str) -> Result<String, LlmError>;
+    async fn complete_text(&self, system: &str, user: &str) -> Result<String, LlmError> {
+        self.complete(system, user).await
+    }
 }
 
 pub struct LlmClient {
@@ -229,6 +232,46 @@ impl Llm for LlmClient {
             Err(error) => return Err(error),
         };
 
+        let content = match self.settings.provider {
+            LlmProvider::Ollama => parse_ollama_content(&text)?,
+            LlmProvider::OpenAi => parse_openai_content(&text)?,
+        };
+        if content.trim().is_empty() {
+            return Err(LlmError::Empty);
+        }
+        Ok(content)
+    }
+
+    /// Odpowiedź w postaci swobodnego tekstu (np. czat, asystent), bez wymuszania schematu JSON.
+    async fn complete_text(&self, system: &str, user: &str) -> Result<String, LlmError> {
+        if system.trim().is_empty() || user.trim().is_empty() {
+            return Err(LlmError::Config("empty prompt".to_string()));
+        }
+
+        let messages = json!([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
+        ]);
+
+        let body = match self.settings.provider {
+            LlmProvider::Ollama => json!({
+                "model": self.settings.model,
+                "messages": messages,
+                "stream": false,
+                "options": {
+                    "temperature": self.settings.temperature,
+                    "num_predict": self.settings.max_tokens
+                }
+            }),
+            LlmProvider::OpenAi => json!({
+                "model": self.settings.model,
+                "messages": messages,
+                "temperature": self.settings.temperature,
+                "max_tokens": self.settings.max_tokens
+            }),
+        };
+
+        let text = self.send(&body).await?;
         let content = match self.settings.provider {
             LlmProvider::Ollama => parse_ollama_content(&text)?,
             LlmProvider::OpenAi => parse_openai_content(&text)?,

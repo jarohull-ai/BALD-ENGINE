@@ -291,7 +291,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bse-classify",
  "bse-config",
+ "bse-core",
+ "bse-fetch",
+ "bse-guard",
+ "bse-llm",
+ "bse-pipeline",
  "bse-store",
  "chrono",
  "include_dir",

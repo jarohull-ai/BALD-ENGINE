@@ -23,7 +23,9 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use crate::discovery::{discover_local_engines, DiscoveryResponse};
-use crate::service::{ClaimsResponse, Service, ServiceError};
+use crate::service::{
+    ChatRequest, ChatResponse, ClaimsResponse, IngestResponse, Service, ServiceError,
+};
 use crate::settings::{SettingsError, SettingsUpdate, SettingsView};
 use bse_store::{ClaimDetail, LedgerStats};
 
@@ -152,6 +154,8 @@ fn router(state: AppState) -> Router {
         .route("/stats", get(stats))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/models/discover", get(models_discover))
+        .route("/chat", axum::routing::post(chat_post))
+        .route("/evidence/ingest", axum::routing::post(ingest_post))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
 
     Router::new()
@@ -212,6 +216,35 @@ async fn settings_put(
 
 async fn models_discover() -> Json<DiscoveryResponse> {
     Json(discover_local_engines().await)
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestPayload {
+    url: String,
+}
+
+async fn chat_post(
+    State(state): State<AppState>,
+    Json(request): Json<ChatRequest>,
+) -> Result<Json<ChatResponse>, ApiError> {
+    state
+        .service
+        .chat(request)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn ingest_post(
+    State(state): State<AppState>,
+    Json(payload): Json<IngestPayload>,
+) -> Result<Json<IngestResponse>, ApiError> {
+    state
+        .service
+        .ingest(&payload.url)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 async fn require_token(State(state): State<AppState>, request: Request, next: Next) -> Response {

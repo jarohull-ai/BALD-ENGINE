@@ -225,8 +225,8 @@ Zestaw obejmuje: 40 zapytań person-targeted i 40 benign (PL/EN/obfuskacja), wal
 tamper-detection audit logu, kanonizację URL, RRF/dedupe, near-duplicate MinHash/LSH,
 politykę SSRF, robots.txt, cache/TTL i uprawnienia plików, ekstrakcję HTML, SQLite,
 Tantivy upsert/search, parsery providerów, transport LLM, ekstrakcję twierdzeń i PII,
-auto-discovery lokalnych modeli (Ollama, LM Studio, LocalAI) oraz
-end-to-end evidence ledger i API. Łącznie **105 testów**.
+auto-discovery lokalnych modeli (Ollama, LM Studio, LocalAI), asystenta czatu z weryfikacją cytatów oraz
+end-to-end evidence ledger i API. Łącznie **107 testów**.
 
 ## Ograniczenia fazy 2
 

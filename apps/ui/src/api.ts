@@ -1,7 +1,10 @@
 import type {
+  ChatRequest,
+  ChatResponse,
   ClaimDetail,
   ClaimsResponse,
   DiscoveryResponse,
+  IngestResponse,
   SettingsUpdate,
   SettingsView,
 } from './types';
@@ -107,5 +110,25 @@ export async function discoverModels(): Promise<DiscoveryResponse> {
     return invoke<DiscoveryResponse>('discover_models');
   }
   return request<DiscoveryResponse>('/api/models/discover');
+}
+
+export async function sendChatMessage(requestPayload: ChatRequest): Promise<ChatResponse> {
+  if (isTauriRuntime()) {
+    return invoke<ChatResponse>('chat', { request: requestPayload });
+  }
+  return request<ChatResponse>('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify(requestPayload),
+  });
+}
+
+export async function ingestEvidence(url: string): Promise<IngestResponse> {
+  if (isTauriRuntime()) {
+    return invoke<IngestResponse>('ingest_evidence', { url });
+  }
+  return request<IngestResponse>('/api/evidence/ingest', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  });
 }
 

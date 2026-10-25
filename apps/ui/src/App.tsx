@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchClaims } from './api';
+import { ChatView } from './components/ChatView';
 import { ClaimDrawer } from './components/ClaimDrawer';
 import { ClaimsView } from './components/ClaimsView';
 import { Header, type Screen } from './components/Header';
@@ -15,7 +16,7 @@ const emptyStats: LedgerStats = {
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('claims');
+  const [screen, setScreen] = useState<Screen>('chat');
   const [claims, setClaims] = useState<ClaimSummary[]>([]);
   const [stats, setStats] = useState<LedgerStats>(emptyStats);
   const [loading, setLoading] = useState(true);
@@ -57,7 +58,15 @@ export default function App() {
       <Header screen={screen} onNavigate={navigate} />
 
       <main className="relative mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
-        {screen === 'claims' ? (
+        {screen === 'chat' ? (
+          <ChatView
+            onOpenClaim={setSelected}
+            onSwitchToLedger={() => {
+              void refresh();
+              navigate('claims');
+            }}
+          />
+        ) : screen === 'claims' ? (
           <div className="space-y-6">
             <StatsBar stats={stats} />
             <ClaimsView

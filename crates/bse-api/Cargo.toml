@@ -9,7 +9,13 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum = "0.8"
+bse-classify.workspace = true
 bse-config.workspace = true
+bse-core.workspace = true
+bse-fetch.workspace = true
+bse-guard.workspace = true
+bse-llm.workspace = true
+bse-pipeline.workspace = true
 bse-store.workspace = true
 chrono.workspace = true
 include_dir = "0.7"
