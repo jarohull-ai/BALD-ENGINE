@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BALD — evidence ledger</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="mark">B</span>
+          <div>
+            <strong>BALD</strong>
+            <span class="tagline">evidence ledger, not link search</span>
+          </div>
+        </div>
+        <div class="topmeta">
+          <span class="phase">faza 0 · shell</span>
+          <button class="ghost" type="button" disabled title="Konfiguracja w fazie 3">
+            providery
+          </button>
+          <button class="ghost" type="button" disabled title="Klucze w fazie 3">
+            klucze
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <p class="eyebrow">wyszukiwarka udokumentowanych narracji</p>
+          <h1>Szukaj twierdzeń, nie osób.</h1>
+          <p class="lede">
+            BALD zbiera dokumenty, oznacza tier źródła, stan archiwum i postawę wobec
+            twierdzenia. Każde zdanie syntezy będzie musiało mieć cytat albo trafi do
+            <em>unsupported</em>.
+          </p>
+
+          <form id="search-form" class="search" autocomplete="off">
+            <label class="sr-only" for="q">Zapytanie</label>
+            <input
+              id="q"
+              name="q"
+              type="search"
+              value="teoria o cichych aktualizacjach"
+              placeholder="np. teoria o cichych aktualizacjach"
+              spellcheck="false"
+            />
+            <button type="submit">szukaj</button>
+          </form>
+
+          <div class="chips" aria-label="Przykłady">
+            <button type="button" data-q="teoria o cichych aktualizacjach">cichy balon</button>
+            <button type="button" data-q="deplatforming twórców w Europie">deplatforming</button>
+            <button type="button" data-q="raport o wycieku danych osobowych">wyciek danych</button>
+            <button type="button" data-q="Gdzie mieszka Jan Kowalski?">test guarda</button>
+          </div>
+        </section>
+
+        <section id="refusal" class="refusal" hidden>
+          <div class="refusal-icon">!</div>
+          <div>
+            <h2>Zapytanie zatrzymane przez person guard</h2>
+            <p id="refusal-reason">
+              To zapytanie próbuje ustalić dane o osobie. BALD dotyczy tematów i twierdzeń —
+              nie osób, adresów, PESEL-u ani wizerunku.
+            </p>
+            <p class="mono" id="refusal-match">rules · pii.where_lives · REFUSE</p>
+            <p class="hint">
+              Spróbuj opisać narrację: „teoria o …”, „raport o …”, „co twierdzą zwolennicy …”.
+            </p>
+          </div>
+        </section>
+
+        <div class="workspace">
+          <section class="results-pane">
+            <div class="results-head">
+              <div>
+                <p class="eyebrow">wyniki</p>
+                <h2 id="results-title">Dla: „teoria o cichych aktualizacjach”</h2>
+              </div>
+              <div class="gate" id="gate">
+                <span class="dot"></span>
+                gate: ALLOW
+                <small>rules · 0.4 ms</small>
+              </div>
+            </div>
+
+            <div id="results" class="results"></div>
+
+            <p class="demo-note">
+              Dane z offline fixtures (<span class="mono">--demo</span>). To nie jest synteza
+              LLM ani ocena prawdziwości — dopiero faza 2.
+            </p>
+          </section>
+
+          <aside class="rail">
+            <section class="card">
+              <p class="eyebrow">stan fazy 0</p>
+              <ul class="checklist">
+                <li class="done">CLI <span class="mono">bald search</span></li>
+                <li class="done">person guard + audit chain</li>
+                <li class="done">SearXNG + Brave adapter</li>
+                <li class="done">SQLite store</li>
+                <li class="todo">Tauri IPC</li>
+              </ul>
+            </section>
+
+            <section class="card">
+              <p class="eyebrow">czego tu nie ma</p>
+              <ul class="plain">
+                <li>ekstrakcji twierdzeń (LLM)</li>
+                <li>walidacji cytowań w UI</li>
+                <li>grafu narracji</li>
+                <li>diffów archiwum</li>
+              </ul>
+            </section>
+
+            <section class="card muted">
+              <p class="eyebrow">zasada</p>
+              <p>
+                „Oficjalne” nie znaczy „prawdziwe”. Tier, autorytet i niezależność to trzy
+                osobne osie — bez jednego „truth score”.
+              </p>
+            </section>
+          </aside>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>BALD 0.1 · MIT core</span>
+        <span>lokalnie · PL/EN · bez profilowania osób</span>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

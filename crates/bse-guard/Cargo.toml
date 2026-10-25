@@ -1,0 +1,25 @@
+[package]
+name = "bse-guard"
+description = "BALD deterministic person gate, citation gate and hash-chained audit log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+bse-core.workspace = true
+chrono.workspace = true
+hex.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+
+[features]
+# Opcjonalny adapter seed-core 0.1.6 (faza 3). Domyślnie nie linkuje JFP.
+seed-gate = []
+
+[dev-dependencies]
+tempfile = "3"

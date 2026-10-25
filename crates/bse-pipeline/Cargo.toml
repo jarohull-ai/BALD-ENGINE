@@ -1,0 +1,22 @@
+[package]
+name = "bse-pipeline"
+description = "BALD search pipeline: guard, fan-out, canonicalization, RRF, store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+bse-core.workspace = true
+bse-guard.workspace = true
+bse-store.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+bse-providers.workspace = true
+tempfile = "3"

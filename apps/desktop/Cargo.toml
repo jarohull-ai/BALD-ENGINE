@@ -1,0 +1,17 @@
+[package]
+name = "bse-desktop"
+description = "BALD desktop shell (Tauri 2)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Jarosław Kuchta <jarohull@gmail.com>"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+# Ten crate jest celowo poza workspace BALD: wymaga systemowego webkit2gtk.
+# Buduje się tylko po instalacji zależności z README.
+[workspace]
