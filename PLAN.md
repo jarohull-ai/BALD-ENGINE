@@ -21,7 +21,7 @@ audit hash chain oraz odłączony shell Tauri. Świadome odstępstwo: `rusqlite`
 
 ## 0. Streszczenie
 
-BALD to **wyszukiwarka udokumentowanych teorii spiskowych** — nie narzędzie do namierzania ludzi.
+BALD to **wyszukiwarka twierdzeń, narracji i materiałów źródłowych** (ang. *Claim, Narrative & Source Evidence Engine*) — nie narzędzie do namierzania ludzi.
 Silnik zbiera **twierdzenia (claims)**, a do każdego z nich **dowody i ich status**: źródła pierwotne,
 archiwa, fact-checki, kontrdowody, daty, ślad usunięć i deplatformizacji.
 
@@ -61,7 +61,7 @@ Cztery filary v0.2:
   a dowodami.
 - Nie obchodzi płatnych ścian, nie łamie ToS, nie scrapuje wbrew robots.txt.
 - Nie jest narzędziem do operacjonalizacji przemocy — zapytania o „jak” są odcinane na poziomie planera.
-- Nie jest „agregatorem treści spiskowych” — indeksuje **dokumenty o teoriach**, w tym ich obalenia,
+- Nie jest „agregatorem niesprawdzonych treści” — indeksuje **dokumenty o twierdzeniach i tematach**, w tym ich obalenia i weryfikację,
   i zawsze oznacza stance.
 
 ### 1.3 Zasady projektowe (twarde)

@@ -1,9 +1,9 @@
 # BALD
 
-Wyszukiwarka **udokumentowanych teorii spiskowych i informacji ocenzurowanych**.
-Nie szuka osób — szuka twierdzeń, narracji i dowodów. Wynikiem nie jest lista linków,
-lecz **evidence ledger**: dokument + tier źródła + autorytet + niezależność + postawa
-(`reports / endorses / debunks / mentions`) + stan archiwum.
+Wyszukiwarka **twierdzeń, narracji i materiałów źródłowych** (ang. *Claim, Narrative & Source Evidence Engine*).
+Nie szuka osób — szuka twierdzeń, narracji i dowodów źródłowych. Wynikiem nie jest zwykła lista linków,
+lecz suwerenny **rejestr dowodowy (evidence ledger)**: dokument + tier źródła + autorytet + niezależność + postawa
+(`reports / endorses / debunks / mentions`) + stan archiwum cyfrowego.
 
 > „Temat tak, osoba nie.”
 
