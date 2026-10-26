@@ -786,9 +786,17 @@ impl Service {
                     &live_sources,
                     &matching,
                 ));
+                // Oczyszczamy treść z powtarzającej się surowej sekcji kierunków śledztwa,
+                // ponieważ interfejs renderuje je estetycznie jako interaktywne kafelki pod odpowiedzią.
+                let clean_content = if let Some(pos) = answer.find("### Proponowane kierunki śledztwa") {
+                    answer[..pos].trim_end().to_string()
+                } else {
+                    answer.clone()
+                };
+
                 return Ok(ChatResponse {
                     role: "assistant".to_string(),
-                    content: answer,
+                    content: clean_content,
                     is_url: false,
                     guard_refused: false,
                     ingest: None,

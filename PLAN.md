@@ -1,11 +1,13 @@
 # BALD SEARCH ENGINE — plan architektury
 
-**Wersja:** 0.8 (plan + fazy 0–4)
+**Wersja:** 1.0 (Fazy 0–4 zrealizowane w 100%)
 **Data:** 2026-10-26
 **Stack:** Rust, desktop-first (Tauri), web-first (`bald serve`), lokalny-first, chmura opcjonalna
-**Status:** fazy 0–3 zrealizowane; silnik, crawler, ledger, API Axum i frontend React działają w pełni;
-faza 4 (wbudowany Mini-LLM z Tool-Callingiem Out-of-the-Box + Model Decyzyjno-Scoringowy) w planie architektonicznym;
-szczegóły decyzji w §16, stan implementacji w §19a
+**Status:** Kompletny, w pełni autonomiczny silnik badawczy OSINT i weryfikacji wiarygodności informacji.
+Wszystkie fazy 0–4 zrealizowane i zweryfikowane: metasearch, crawler, suwerenny ledger, API Axum,
+frontend React, wbudowany silnik Candle GGUF Mini-LLM (Qwen 2.5), Sędzia Wiarygodności T1–T5,
+Szperacz Modeli AI z harmonogramem, tryb Jazdy Próbnej A/B z rollbackiem, zarządzanie bazą twierdzeń
+oraz wbudowany samouczek CLI i interaktywne dymki pomocy.
 
 **Decyzje zamykające v0.1:** Tauri · Leptos · bez własnego crawlera w v1 · PL+EN ·
 presety chmurowe + lokalne + „dodaj providera”.
@@ -1410,4 +1412,5 @@ roadmapę — plan bez pomiarów to hipoteza.
 | 0.5 | Faza 1: `bse-fetch` (SSRF+robots+cache+ekstrakcja), `bse-index` (Tantivy/BM25), near-duplicate MinHash/LSH, entropia domen, CLI `fetch`/`index add/search/stats`, ADR-006; MSRV 1.88; stan w §19a. |
 | 0.6 | Faza 2: `bse-llm` (Ollama/OpenAI-compatible, endpoint policy), `bse-classify` (claims/stance/encje/PII/fallback), evidence ledger SQLite, `CitationGate` + cytat ≥ 24 znaki, CLI `evidence add/list/show/stats`, ADR-007; stan w §19a. |
 | 0.7 | Faza 3: `bse-api` (Axum loopback, session token, CSP), `bald serve`, frontend React+Tailwind `apps/ui` (claims grid, evidence drawer, settings), Tauri IPC bridge, atomowy config 0600, ADR-008; stan w §19a. |
-| 0.8 | Faza 4 (W toku): Wbudowany Mini-LLM (Qwen 2.5 1.5B Tool-Calling Out-of-the-Box) + Model Decyzyjno-Scoringowy ONNX (Wiarygodność 0–100%, ochrona bazy, re-ranking) + Bot Tropiciel Modeli AI (Auto-Scout co 7/14/30 dni) + Tryb Jazdy Próbnej w czacie z błyskawicznym rollbackiem + Samouczek, Tooltipy `(i)` i Help w UI na finał wydania. |
+| 0.8 | Faza 4: Wbudowany Mini-LLM (Candle Rust GGUF Qwen 2.5 Out-of-the-Box) + Sędzia Wiarygodności (Credibility Judge T1–T5) + Szperacz Modeli AI (Auto-Scout co 7/14/30 dni) + Tryb Jazdy Próbnej A/B z rollbackiem + Samouczek `/help`, dymki `(i)` i kompendium OSINT. |
+| 1.0 | Faza 5 (Wydanie 1.0): Inteligentny matcher faktów ze stop-words (eliminacja zanieczyszczeń), kasowanie pojedyncze i masowe twierdzeń, oczyszczony renderer kierunków śledztwa, pełna weryfikacja workspace (0 ostrzeżeń Clippy), synchronizacja z GitHubem. |
