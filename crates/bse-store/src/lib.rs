@@ -10,10 +10,35 @@ use std::sync::Mutex;
 use chrono::{SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
 use bse_core::{ClaimKind, EntityKind, EvidenceBundle, NewClaim, Stance};
+
+pub const VIP_CODE_HASHES: &[&str] = &[
+    "e2fc70dfefc260c0dddc07ba77967cd905b76b0c430a30204a3543b576afb770",
+    "e166a2ef6cbfdb663e6d4c956fe9a4f4048ac7a9e0b3dfc59ce3bd7c0671fcd6",
+    "e92fdf3192031471d531faf3a4a3ca4e475456981aa5864906c0dcec68f37f38",
+    "c807ca376893c24bf0cd052495777b64e96f94ef3b6ce677ce63706e6c3447e6",
+    "a1114d55febc4f1766b57e709a842b6fbb8e823909b5d0c0177c203a929819a9",
+    "c8382d15c596650cab020a49fe2bcf5d2f55f5e01ec30ba08163c9fade1c7979",
+    "a228f79dcd4e28e6f74eba0c7cf87a5f941465bc09a9e55f68848bca550dcd02",
+    "cc511504101f373379d8af20ab4e92368fe579151eb69f6066680a9c40a6071b",
+    "9d76a30af9101bebc29bf6d10cdd7ad949d9a2c7546f370ec7367e03d2398589",
+    "337ae09cd965bd9bb743a249a018c5e34a65450a133d7f0c45544e3695a27ed4",
+];
+
+pub const VIP_CODE_BONUS: f64 = 10_000.0;
+pub const QUERY_COST: f64 = 0.25;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletInfo {
+    pub balance: f64,
+    pub queries_made: u64,
+    pub query_cost: f64,
+    pub formatted: String,
+}
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -28,6 +53,15 @@ pub enum StoreError {
 
     #[error("ambiguous claim id prefix: {0}")]
     AmbiguousClaim(String),
+
+    #[error("kod został już wcześniej wykorzystany")]
+    CodeAlreadyRedeemed,
+
+    #[error("nieprawidłowy kod licencyjny")]
+    InvalidCode,
+
+    #[error("niewystarczająca liczba kredytów Bald$ (wymagane {0:.2} Bald$)")]
+    InsufficientBalance(f64),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +365,23 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_bot_runs_bot ON bot_runs(bot_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_research_bots_due ON research_bots(enabled, next_run_at);
+
+            CREATE TABLE IF NOT EXISTS wallet (
+                id           INTEGER PRIMARY KEY CHECK (id = 1),
+                balance      REAL NOT NULL DEFAULT 1000.0,
+                queries_made INTEGER NOT NULL DEFAULT 0,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS redeemed_codes (
+                code_hash    TEXT PRIMARY KEY,
+                amount       REAL NOT NULL,
+                redeemed_at  TEXT NOT NULL
+            );
+
+            INSERT OR IGNORE INTO wallet (id, balance, queries_made, created_at, updated_at)
+            VALUES (1, 1000.0, 0, datetime('now'), datetime('now'));
             "#,
         )?;
 
@@ -674,6 +725,90 @@ impl Store {
         let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
         let count = conn.execute("DELETE FROM claims", [])?;
         Ok(count)
+    }
+
+    pub fn get_wallet(&self) -> Result<WalletInfo, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let mut stmt = conn.prepare("SELECT balance, queries_made FROM wallet WHERE id = 1")?;
+        let info = stmt.query_row([], |row| {
+            let balance: f64 = row.get(0)?;
+            let queries_made: u64 = row.get(1)?;
+            Ok(WalletInfo {
+                balance,
+                queries_made,
+                query_cost: QUERY_COST,
+                formatted: format!("{balance:.2} Bald$"),
+            })
+        })?;
+        Ok(info)
+    }
+
+    pub fn deduct_query_cost(&self, cost: f64) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let current_balance: f64 = conn.query_row(
+            "SELECT balance FROM wallet WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        if current_balance < cost {
+            return Ok(false);
+        }
+        conn.execute(
+            "UPDATE wallet SET balance = balance - ?1, queries_made = queries_made + 1, updated_at = datetime('now') WHERE id = 1",
+            params![cost],
+        )?;
+        Ok(true)
+    }
+
+    pub fn redeem_voucher(&self, raw_code: &str) -> Result<WalletInfo, StoreError> {
+        let normalized = raw_code.trim().to_uppercase();
+        if normalized.is_empty() {
+            return Err(StoreError::InvalidCode);
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(normalized.as_bytes());
+        let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+
+        if !VIP_CODE_HASHES.contains(&hash.as_str()) {
+            return Err(StoreError::InvalidCode);
+        }
+
+        let mut conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let tx = conn.transaction()?;
+
+        let already_redeemed: bool = {
+            let mut stmt = tx.prepare("SELECT 1 FROM redeemed_codes WHERE code_hash = ?1")?;
+            stmt.exists(params![hash])?
+        };
+        if already_redeemed {
+            return Err(StoreError::CodeAlreadyRedeemed);
+        }
+
+        tx.execute(
+            "INSERT INTO redeemed_codes (code_hash, amount, redeemed_at) VALUES (?1, ?2, datetime('now'))",
+            params![hash, VIP_CODE_BONUS],
+        )?;
+
+        tx.execute(
+            "UPDATE wallet SET balance = balance + ?1, updated_at = datetime('now') WHERE id = 1",
+            params![VIP_CODE_BONUS],
+        )?;
+
+        let row: (f64, u64) = tx.query_row(
+            "SELECT balance, queries_made FROM wallet WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+
+        tx.commit()?;
+
+        Ok(WalletInfo {
+            balance: row.0,
+            queries_made: row.1,
+            query_cost: QUERY_COST,
+            formatted: format!("{:.2} Bald$", row.0),
+        })
     }
 
     pub fn resolve_claim_id(&self, prefix: &str) -> Result<Option<String>, StoreError> {
@@ -1351,5 +1486,37 @@ mod tests {
         // Delete bot
         assert!(store.delete_bot(&bot.id).unwrap());
         assert!(store.list_bots().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wallet_initial_balance_deduct_and_redeem() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("bald.db")).unwrap();
+
+        let initial = store.get_wallet().unwrap();
+        assert_eq!(initial.balance, 1000.0);
+        assert_eq!(initial.queries_made, 0);
+
+        // Deduct query cost
+        assert!(store.deduct_query_cost(0.25).unwrap());
+        let after = store.get_wallet().unwrap();
+        assert_eq!(after.balance, 999.75);
+        assert_eq!(after.queries_made, 1);
+
+        // Invalid code rejected
+        assert!(matches!(
+            store.redeem_voucher("INVALID-CODE-XXX"),
+            Err(StoreError::InvalidCode)
+        ));
+
+        // Valid VIP code 1 (BALD-VIP-C2CF-C158)
+        let redeemed = store.redeem_voucher("bald-vip-c2cf-c158").unwrap();
+        assert_eq!(redeemed.balance, 10999.75);
+
+        // Reusing same code rejected
+        assert!(matches!(
+            store.redeem_voucher("BALD-VIP-C2CF-C158"),
+            Err(StoreError::CodeAlreadyRedeemed)
+        ));
     }
 }

@@ -12,6 +12,8 @@ bald.toml
 .env
 .DS_Store
 Notatki.txt
+*_SECRET.txt
+VIP_CODES_SECRET.txt
 node_modules
 **/node_modules
 

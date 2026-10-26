@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchClaims, deleteClaim } from './api';
+import { fetchClaims, deleteClaim, fetchWallet } from './api';
 import { BotsView } from './components/BotsView';
 import { ChatView } from './components/ChatView';
 import { ClaimDrawer } from './components/ClaimDrawer';
 import { ClaimsView } from './components/ClaimsView';
 import { Header, type Screen } from './components/Header';
 import { HelpModal } from './components/HelpModal';
+import { WalletModal } from './components/WalletModal';
 import { SettingsView } from './components/SettingsView';
 import { StatsBar } from './components/StatsBar';
-import type { ClaimSummary, LedgerStats } from './types';
+import type { ClaimSummary, LedgerStats, WalletInfo } from './types';
 
 const emptyStats: LedgerStats = {
   claims: 0,
@@ -25,14 +26,20 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ClaimSummary | null>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [wallet, setWallet] = useState<WalletInfo | null>(null);
+  const [isWalletOpen, setIsWalletOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchClaims(200);
-      setClaims(response.claims);
-      setStats(response.stats);
+      const [claimsResp, walletResp] = await Promise.all([
+        fetchClaims(200),
+        fetchWallet().catch(() => null),
+      ]);
+      setClaims(claimsResp.claims);
+      setStats(claimsResp.stats);
+      if (walletResp) setWallet(walletResp);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -58,13 +65,22 @@ export default function App() {
         aria-hidden="true"
       />
 
-      <Header screen={screen} onNavigate={navigate} onOpenHelp={() => setIsHelpOpen(true)} />
+      <Header
+        screen={screen}
+        onNavigate={navigate}
+        onOpenHelp={() => setIsHelpOpen(true)}
+        wallet={wallet}
+        onOpenWallet={() => setIsWalletOpen(true)}
+      />
 
       <main className="relative mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
         {screen === 'chat' ? (
           <ChatView
             onOpenClaim={setSelected}
             onOpenHelp={() => setIsHelpOpen(true)}
+            wallet={wallet}
+            onOpenWallet={() => setIsWalletOpen(true)}
+            onWalletUpdated={setWallet}
             onSwitchToLedger={() => {
               void refresh();
               navigate('claims');
@@ -110,6 +126,12 @@ export default function App() {
         />
       )}
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+      <WalletModal
+        isOpen={isWalletOpen}
+        onClose={() => setIsWalletOpen(false)}
+        wallet={wallet}
+        onWalletUpdated={setWallet}
+      />
     </div>
   );
 }

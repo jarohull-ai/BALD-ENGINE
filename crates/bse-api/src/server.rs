@@ -101,6 +101,15 @@ impl From<ServiceError> for ApiError {
             ServiceError::Settings(SettingsError::Invalid(message)) => {
                 ApiError::bad_request(message)
             }
+            ServiceError::Store(bse_store::StoreError::InvalidCode) => {
+                ApiError::bad_request("Nieprawidłowy kod licencyjny.")
+            }
+            ServiceError::Store(bse_store::StoreError::CodeAlreadyRedeemed) => {
+                ApiError::bad_request("Ten kod został już wcześniej wykorzystany.")
+            }
+            ServiceError::Store(bse_store::StoreError::InsufficientBalance(b)) => {
+                ApiError::bad_request(format!("Niewystarczająca liczba kredytów (wymagane {b:.2} Bald$)"))
+            }
             other => ApiError::internal(other),
         }
     }
@@ -159,6 +168,8 @@ fn router(state: AppState) -> Router {
         .route("/claims/clear", axum::routing::post(claims_clear))
         .route("/claims/{id}", get(claim_detail).delete(claim_delete))
         .route("/stats", get(stats))
+        .route("/wallet", get(wallet_get))
+        .route("/wallet/redeem", axum::routing::post(wallet_redeem))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/models/discover", get(models_discover))
         .route("/models/embedded", get(embedded_models_get))
@@ -233,6 +244,24 @@ async fn claims_clear(
 async fn stats(State(state): State<AppState>) -> Result<Json<LedgerStats>, ApiError> {
     let stats = state.service.stats().map_err(ApiError::from)?;
     Ok(Json(stats))
+}
+
+async fn wallet_get(State(state): State<AppState>) -> Result<Json<bse_store::WalletInfo>, ApiError> {
+    let wallet = state.service.wallet().map_err(ApiError::from)?;
+    Ok(Json(wallet))
+}
+
+#[derive(Debug, Deserialize)]
+struct RedeemRequest {
+    code: String,
+}
+
+async fn wallet_redeem(
+    State(state): State<AppState>,
+    Json(req): Json<RedeemRequest>,
+) -> Result<Json<bse_store::WalletInfo>, ApiError> {
+    let wallet = state.service.redeem_voucher(&req.code).map_err(ApiError::from)?;
+    Ok(Json(wallet))
 }
 
 async fn settings_get(State(state): State<AppState>) -> Result<Json<SettingsView>, ApiError> {

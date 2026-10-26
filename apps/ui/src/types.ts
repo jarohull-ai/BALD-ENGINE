@@ -324,6 +324,15 @@ export interface ChatResponse {
   in_trial?: boolean;
   trial_model?: string | null;
   previous_model?: string | null;
+  insufficient_credits?: boolean;
+  wallet?: WalletInfo;
+}
+
+export interface WalletInfo {
+  balance: number;
+  queries_made: number;
+  query_cost: number;
+  formatted: string;
 }
 
 export interface SearchHit {

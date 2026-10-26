@@ -141,6 +141,10 @@ pub struct ChatResponse {
     pub trial_model: Option<String>,
     #[serde(default)]
     pub previous_model: Option<String>,
+    #[serde(default)]
+    pub insufficient_credits: bool,
+    #[serde(default)]
+    pub wallet: Option<bse_store::WalletInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,6 +241,14 @@ impl Service {
 
     pub fn clear_claims(&self) -> Result<usize, ServiceError> {
         self.store.clear_claims().map_err(ServiceError::from)
+    }
+
+    pub fn wallet(&self) -> Result<bse_store::WalletInfo, ServiceError> {
+        self.store.get_wallet().map_err(ServiceError::from)
+    }
+
+    pub fn redeem_voucher(&self, code: &str) -> Result<bse_store::WalletInfo, ServiceError> {
+        self.store.redeem_voucher(code).map_err(ServiceError::from)
     }
 
     pub fn stats(&self) -> Result<LedgerStats, ServiceError> {
@@ -552,6 +564,7 @@ impl Service {
 
         let message = req.message.trim();
         if message.is_empty() {
+            let wallet = self.store.get_wallet().ok();
             return Ok(ChatResponse {
                 role: "assistant".to_string(),
                 content:
@@ -569,7 +582,34 @@ impl Service {
                 in_trial,
                 trial_model,
                 previous_model,
+                insufficient_credits: false,
+                wallet,
             });
+        }
+
+        // 0. Sprawdź stan portfela Bald$
+        let current_wallet = self.store.get_wallet().ok();
+        if let Some(w) = &current_wallet {
+            if w.balance < bse_store::QUERY_COST {
+                return Ok(ChatResponse {
+                    role: "assistant".to_string(),
+                    content: "⚠️ **Wyczerpano kredyty analityczne Bald$ (saldo: 0.00 Bald$).**\n\nAby kontynuować badania OSINT i weryfikację faktów, wprowadź jednorazowy kod licencyjny Bald$ (np. `BALD-VIP-...`) w oknie portfela.".to_string(),
+                    is_url: false,
+                    guard_refused: false,
+                    ingest: None,
+                    matching_claims: Vec::new(),
+                    sources: Vec::new(),
+                    auto_researched: false,
+                    new_claims_count: 0,
+                    follow_ups: Vec::new(),
+                    credibility: None,
+                    in_trial,
+                    trial_model,
+                    previous_model,
+                    insufficient_credits: true,
+                    wallet: Some(w.clone()),
+                });
+            }
         }
 
         // 1. Sprawdź czy wiadomość zawiera URL
@@ -596,6 +636,8 @@ impl Service {
                         }],
                         &[],
                     ));
+                    let _ = self.store.deduct_query_cost(bse_store::QUERY_COST);
+                    let wallet = self.store.get_wallet().ok();
                     return Ok(ChatResponse {
                         role: "assistant".to_string(),
                         content: text,
@@ -611,9 +653,12 @@ impl Service {
                         in_trial,
                         trial_model,
                         previous_model,
+                        insufficient_credits: false,
+                        wallet,
                     });
                 }
                 Err(err) => {
+                    let wallet = self.store.get_wallet().ok();
                     return Ok(ChatResponse {
                         role: "assistant".to_string(),
                         content: format!("Nie udało się pobrać lub zbadać podanego linku:\n`{err}`\n\nUpewnij się, że strona jest publicznie dostępna i nie narusza zasad bezpieczeństwa (SSRF)."),
@@ -629,6 +674,8 @@ impl Service {
                         in_trial,
                         trial_model,
                         previous_model,
+                        insufficient_credits: false,
+                        wallet,
                     });
                 }
             }
@@ -643,6 +690,7 @@ impl Service {
             semantic_dispersion: None,
         });
         if matches!(verdict.decision, GateDecision::Refuse) {
+            let wallet = self.store.get_wallet().ok();
             return Ok(ChatResponse {
                 role: "assistant".to_string(),
                 content: "Zgodnie z nadrzędną zasadą BALD (**„Temat tak, osoba nie”**), zapytania ukierunkowane na profilowanie osób prywatnych są blokowane. Chronimy prywatność i nie profilujemy osób.\n\nMożesz zapytać o zjawiska, organizacje, wydarzenia, twierdzenia, autorów książek i postacie publiczne — z chęcią je zbadam.".to_string(),
@@ -658,6 +706,8 @@ impl Service {
                 in_trial,
                 trial_model,
                 previous_model,
+                insufficient_credits: false,
+                wallet,
             });
         }
 
@@ -794,6 +844,9 @@ impl Service {
                     answer.clone()
                 };
 
+                let _ = self.store.deduct_query_cost(bse_store::QUERY_COST);
+                let wallet = self.store.get_wallet().ok();
+
                 return Ok(ChatResponse {
                     role: "assistant".to_string(),
                     content: clean_content,
@@ -809,6 +862,8 @@ impl Service {
                     in_trial,
                     trial_model,
                     previous_model,
+                    insufficient_credits: false,
+                    wallet,
                 });
             }
         }
@@ -867,6 +922,9 @@ impl Service {
             &matching,
         ));
 
+        let _ = self.store.deduct_query_cost(bse_store::QUERY_COST);
+        let wallet = self.store.get_wallet().ok();
+
         Ok(ChatResponse {
             role: "assistant".to_string(),
             content,
@@ -882,6 +940,8 @@ impl Service {
             in_trial,
             trial_model,
             previous_model,
+            insufficient_credits: false,
+            wallet,
         })
     }
 

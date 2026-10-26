@@ -1,6 +1,7 @@
-import { Bot, HelpCircle, Languages, MessageSquareText, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
+import { Bot, Coins, HelpCircle, Languages, MessageSquareText, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
+import type { WalletInfo } from '../types';
 
 export type Screen = 'chat' | 'claims' | 'bots' | 'settings';
 
@@ -8,10 +9,14 @@ export function Header({
   screen,
   onNavigate,
   onOpenHelp,
+  wallet,
+  onOpenWallet,
 }: {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
   onOpenHelp?: () => void;
+  wallet?: WalletInfo | null;
+  onOpenWallet?: () => void;
 }) {
   const { lang, setLang, t } = useI18n();
 
@@ -109,6 +114,26 @@ export function Header({
             {t('shell.phase')}
           </span>
         </div>
+
+        {onOpenWallet && (
+          <button
+            type="button"
+            onClick={onOpenWallet}
+            aria-label="Portfel Bald$"
+            title={`Stan portfela: ${wallet?.formatted ?? '1 000.00 Bald$'}. Kliknij, aby otworzyć portfel.`}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-[11px] font-semibold transition shadow-sm',
+              (wallet?.balance ?? 1000) < 0.25
+                ? 'border-rose-500/35 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 animate-pulse'
+                : 'border-amber-400/30 bg-amber-400/[0.08] text-amber-300 hover:bg-amber-400/15 hover:border-amber-400/50',
+            )}
+          >
+            <Coins className="h-3.5 w-3.5 text-amber-400" />
+            <span className="font-mono font-bold tracking-tight">
+              {wallet ? `${wallet.balance.toFixed(2)} Bald$` : '1 000.00 Bald$'}
+            </span>
+          </button>
+        )}
 
         <button
           type="button"

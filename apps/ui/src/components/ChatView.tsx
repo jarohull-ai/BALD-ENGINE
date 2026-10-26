@@ -4,6 +4,7 @@ import {
   ArrowUp,
   Bot,
   CheckCircle2,
+  Coins,
   Compass,
   Download,
   ExternalLink,
@@ -22,7 +23,7 @@ import {
 import { commitTrialModel, ingestEvidence, rollbackTrialModel, searchWeb, sendChatMessage } from '../api';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
-import type { ChatMessageItem, ClaimSummary, IngestResponse, SearchHit } from '../types';
+import type { ChatMessageItem, ClaimSummary, IngestResponse, SearchHit, WalletInfo } from '../types';
 import { InfoTooltip } from './InfoTooltip';
 import { Badge, CardShell } from './ui';
 
@@ -30,6 +31,9 @@ interface ChatViewProps {
   onOpenClaim?: (claim: ClaimSummary) => void;
   onSwitchToLedger?: () => void;
   onOpenHelp?: () => void;
+  wallet?: WalletInfo | null;
+  onOpenWallet?: () => void;
+  onWalletUpdated?: (wallet: WalletInfo) => void;
 }
 
 const STORAGE_KEY = 'bald.chat.history.v1';
@@ -44,7 +48,14 @@ function loadStoredMessages(): ChatMessageItem[] {
   }
 }
 
-export function ChatView({ onOpenClaim, onSwitchToLedger, onOpenHelp }: ChatViewProps) {
+export function ChatView({
+  onOpenClaim,
+  onSwitchToLedger,
+  onOpenHelp,
+  wallet,
+  onOpenWallet,
+  onWalletUpdated,
+}: ChatViewProps) {
   const { t } = useI18n();
   const [mode, setMode] = useState<'chat' | 'search'>('chat');
   const [messages, setMessages] = useState<ChatMessageItem[]>(loadStoredMessages);
@@ -127,6 +138,13 @@ export function ChatView({ onOpenClaim, onSwitchToLedger, onOpenHelp }: ChatView
         };
 
         setMessages((prev) => [...prev, assistantMessage]);
+
+        if (response.wallet && onWalletUpdated) {
+          onWalletUpdated(response.wallet);
+        }
+        if (response.insufficient_credits && onOpenWallet) {
+          onOpenWallet();
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -712,6 +730,27 @@ export function ChatView({ onOpenClaim, onSwitchToLedger, onOpenHelp }: ChatView
             <div ref={messagesEndRef} />
           </div>
 
+          {/* Insufficient credits warning banner */}
+          {wallet && wallet.balance < 0.25 && (
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-500/35 bg-rose-500/15 p-3 text-xs text-rose-200 shadow-lg animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <Coins className="h-4 w-4 text-amber-400 shrink-0" />
+                <span>
+                  <strong>Wyczerpano kredyty analityczne Bald$</strong> (saldo: {wallet.balance.toFixed(2)} Bald$).
+                </span>
+              </div>
+              {onOpenWallet && (
+                <button
+                  type="button"
+                  onClick={onOpenWallet}
+                  className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-amber-950 transition hover:bg-amber-300 shadow-sm"
+                >
+                  Doładuj kodem VIP (+10 000 Bald$)
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Input area */}
           <CardShell className="p-2 sm:p-2.5">
             <div className="flex items-end gap-2">
@@ -721,14 +760,14 @@ export function ChatView({ onOpenClaim, onSwitchToLedger, onOpenHelp }: ChatView
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDownChat}
-                disabled={sending}
-                placeholder={t('chat.placeholder')}
+                disabled={sending || (wallet !== undefined && wallet !== null && wallet.balance < 0.25)}
+                placeholder={wallet && wallet.balance < 0.25 ? 'Wyczerpano kredyty Bald$. Wprowadź kod licencyjny, aby odblokować.' : t('chat.placeholder')}
                 className="w-full resize-none rounded-xl border-none bg-transparent px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-0 disabled:opacity-50"
               />
               <button
                 type="button"
                 onClick={() => void handleSendChat()}
-                disabled={sending || !input.trim()}
+                disabled={sending || !input.trim() || (wallet !== undefined && wallet !== null && wallet.balance < 0.25)}
                 className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-400 text-amber-950 shadow-[0_4px_16px_rgba(251,191,36,0.2)] transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
                 title={t('chat.send')}
               >

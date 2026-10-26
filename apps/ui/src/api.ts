@@ -14,6 +14,7 @@ import type {
   SettingsUpdate,
   SettingsView,
   TrialActionResponse,
+  WalletInfo,
 } from './types';
 
 declare global {
@@ -264,5 +265,16 @@ export async function rollbackTrialModel(): Promise<TrialActionResponse> {
     return invoke<TrialActionResponse>('trial_rollback');
   }
   return request<TrialActionResponse>('/api/models/trial/rollback', { method: 'POST' });
+}
+
+export async function fetchWallet(): Promise<WalletInfo> {
+  return request<WalletInfo>('/api/wallet');
+}
+
+export async function redeemVoucher(code: string): Promise<WalletInfo> {
+  return request<WalletInfo>('/api/wallet/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
 }
 
