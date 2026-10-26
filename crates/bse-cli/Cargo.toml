@@ -1,10 +1,13 @@
 [package]
-name = "bse-cli"
-description = "BALD command line: search, guard, audit, providers, config"
+name = "bald-engine"
+description = "BALD sovereign OSINT search engine and cryptographic evidence ledger"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
 
 [[bin]]
 name = "bald"

@@ -214,6 +214,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bald-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bse-api",
+ "bse-classify",
+ "bse-config",
+ "bse-core",
+ "bse-fetch",
+ "bse-guard",
+ "bse-index",
+ "bse-llm",
+ "bse-pipeline",
+ "bse-providers",
+ "bse-store",
+ "clap",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "base64"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -353,27 +374,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "bse-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bse-api",
- "bse-classify",
- "bse-config",
- "bse-core",
- "bse-fetch",
- "bse-guard",
- "bse-index",
- "bse-llm",
- "bse-pipeline",
- "bse-providers",
- "bse-store",
- "clap",
- "serde_json",
  "tokio",
 ]
 
