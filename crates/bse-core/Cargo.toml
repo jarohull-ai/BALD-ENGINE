@@ -1,4 +1,5 @@
 [package]
+readme = "README.md"
 name = "bse-core"
 description = "BALD domain types, provider contract and gate contract"
 version.workspace = true

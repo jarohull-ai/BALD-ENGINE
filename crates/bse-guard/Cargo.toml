@@ -1,4 +1,5 @@
 [package]
+readme = "README.md"
 name = "bse-guard"
 description = "BALD deterministic person gate, citation gate and hash-chained audit log"
 version.workspace = true

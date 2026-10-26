@@ -1,4 +1,5 @@
 [package]
+readme = "README.md"
 name = "bse-store"
 description = "BALD SQLite store (runs, documents, evidence ledger skeleton)"
 version.workspace = true

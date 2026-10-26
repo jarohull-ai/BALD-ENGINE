@@ -1,4 +1,5 @@
 [package]
+readme = "README.md"
 name = "bse-api"
 description = "BALD local service API: claims, evidence and settings"
 version.workspace = true

@@ -1,4 +1,5 @@
 [package]
+readme = "README.md"
 name = "bse-classify"
 description = "BALD claim extraction, non-person entities and source stance classification"
 version.workspace = true

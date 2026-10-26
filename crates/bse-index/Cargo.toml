@@ -1,4 +1,5 @@
 [package]
+readme = "README.md"
 name = "bse-index"
 description = "BALD local full-text index (Tantivy/BM25) for fetched documents"
 version.workspace = true
