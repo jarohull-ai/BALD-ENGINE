@@ -83,11 +83,13 @@ Jeszcze nie ma: grafu narracji, diffów archiwum, własnego headless browsera (P
 - **Problem:** Wcześniejsza logika weryfikacji unikalności sprawdzała `has_document` w oparciu o samą tabelę `documents`, do której zapisywany był wstępny indeks wyszukiwania. W efekcie boty natychmiast uznawały znalezione linki za „już istniejące” i kończyły przebieg z `urls_checked: 0, claims_added: 0`.
 - **Rozwiązanie:** Zaktualizowano `has_document` w `bse-store`, by sprawdzał faktycznie pobrane dokumenty (`fetched_at IS NOT NULL`). Teraz boty w tle autonomicznie pobierają treść stron, przeprowadzają klasyfikację i zasilają centralny **Rejestr Twierdzeń (Evidence Ledger)** z cytatami i powiązaniami. W UI dodano banner informacyjny, bezpośrednie przejście do Rejestru z kart i historii bota oraz czytelne opisy w szufladzie historii przebiegów.
 
-### 8. Faza 4: Wbudowany Mini-LLM (Tool-Calling) i Model Decyzyjno-Scoringowy
+### 8. Faza 4: Wbudowany Mini-LLM (Tool-Calling), Model Decyzyjny i Samouczący się Ekosystem Modeli
 - **Koncepcja dwusilnikowa Out-of-the-Box:**
   1. **Natywny Mini-LLM w Rust (Qwen 2.5 1.5B Instruct GGUF Q4):** wbudowany prosto w aplikację, działający natychmiast po instalacji bez konieczności konfiguracji zewnętrznych serwisów (Ollama/Python). Obsługuje natywny *Function / Tool Calling* (`search_web`, `ingest_url`, `query_ledger`) zabezpieczony gramatyką *Grammar-Constrained Decoding* (gwarancja 100% poprawnej składni JSON).
   2. **Model Decyzyjno-Scoringowy (ONNX / Tabular Judge):** twardy filtr numeryczny szacujący wiarygodność źródła (0–100%), odrzucający farmy dezinformacyjne, wykrywający skoordynowane kampanie narracyjne i wykonujący faktograficzny re-ranking.
   3. **Interfejs Dwuwarstwowy:** Czysty, intuicyjny interfejs dla użytkownika nietechnicznego („Zero-Config”), z zaawansowanymi opcjami (Ollama, API, Tor) ukrytymi w dedykowanej sekcji Zaawansowane.
+  4. **Autonomiczny Bot Tropiciel Modeli (*AI Model Scout*):** wbudowany bot badawczy w Zaawansowanych (interwał 7/14/30 dni), który sam monitoruje rynek AI (Hugging Face Hub, benchmarki), wykrywa premiery modeli <3B z Tool-Callingiem i automatycznie raportuje je zespołowi BALD i użytkownikowi.
+  5. **Tryb Jazdy Próbnej (*A/B Sandbox & Instant Rollback*):** pobieranie i testowanie nowego modelu bezpośrednio w czacie z przyciskami `[Zatwierdź i zachowaj]` / `[Przywróć poprzedni model]` pod każdą odpowiedzią, bez ryzyka uszkodzenia konfiguracji.
 
 ## Szybki start
 
