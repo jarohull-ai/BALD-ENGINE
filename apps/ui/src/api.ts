@@ -95,6 +95,18 @@ export async function fetchClaim(claimId: string): Promise<ClaimDetail> {
   return request<ClaimDetail>(`/api/claims/${encodeURIComponent(claimId)}`);
 }
 
+export async function deleteClaim(claimId: string): Promise<{ deleted: boolean; id: string }> {
+  return request<{ deleted: boolean; id: string }>(`/api/claims/${encodeURIComponent(claimId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function clearAllClaims(): Promise<{ cleared: number }> {
+  return request<{ cleared: number }>('/api/claims/clear', {
+    method: 'POST',
+  });
+}
+
 export async function fetchSettings(): Promise<SettingsView> {
   if (isTauriRuntime()) {
     return invoke<SettingsView>('get_settings');

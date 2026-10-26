@@ -664,6 +664,18 @@ impl Store {
         }))
     }
 
+    pub fn delete_claim(&self, claim_id: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let count = conn.execute("DELETE FROM claims WHERE id = ?1", params![claim_id])?;
+        Ok(count > 0)
+    }
+
+    pub fn clear_claims(&self) -> Result<usize, StoreError> {
+        let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
+        let count = conn.execute("DELETE FROM claims", [])?;
+        Ok(count)
+    }
+
     pub fn resolve_claim_id(&self, prefix: &str) -> Result<Option<String>, StoreError> {
         let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
         let mut stmt = conn.prepare(
@@ -1237,6 +1249,14 @@ mod tests {
         assert_eq!(stats.evidence, 1);
         assert_eq!(stats.entities, 1);
         assert_eq!(stats.documents_with_evidence, 1);
+
+        assert!(store.delete_claim("sha256:claim-one").unwrap());
+        assert_eq!(store.ledger_stats().unwrap().claims, 0);
+
+        store.record_evidence(&bundle).unwrap();
+        assert_eq!(store.ledger_stats().unwrap().claims, 1);
+        assert_eq!(store.clear_claims().unwrap(), 1);
+        assert_eq!(store.ledger_stats().unwrap().claims, 0);
     }
 
     #[test]

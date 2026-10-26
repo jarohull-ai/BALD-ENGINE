@@ -8,6 +8,7 @@ import {
   Network,
   Quote,
   Sparkles,
+  Trash2,
   Waypoints,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -71,10 +72,12 @@ export function ClaimCard({
   claim,
   index,
   onOpen,
+  onDelete,
 }: {
   claim: ClaimSummary;
   index: number;
   onOpen: (claim: ClaimSummary) => void;
+  onDelete?: (claimId: string) => void;
 }) {
   const { t, lang } = useI18n();
   const KindIcon = kindIcons[claim.kind] ?? CircleHelp;
@@ -104,20 +107,36 @@ export function ClaimCard({
       />
 
       <div className="flex flex-1 flex-col p-5">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.11em]',
-              kind.tone,
-            )}
-          >
-            <KindIcon className="h-3 w-3" />
-            {t(kind.key)}
-          </span>
-          {claim.lang && (
-            <span className="rounded-full border border-white/[0.07] px-2 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-slate-600">
-              {claim.lang}
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.11em]',
+                kind.tone,
+              )}
+            >
+              <KindIcon className="h-3 w-3" />
+              {t(kind.key)}
             </span>
+            {claim.lang && (
+              <span className="rounded-full border border-white/[0.07] px-2 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-slate-600">
+                {claim.lang}
+              </span>
+            )}
+          </div>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(claim.id);
+              }}
+              title={t('claims.delete')}
+              aria-label={t('claims.delete')}
+              className="rounded-lg p-1.5 text-slate-500 opacity-60 transition hover:bg-rose-500/20 hover:text-rose-300 hover:opacity-100"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
 

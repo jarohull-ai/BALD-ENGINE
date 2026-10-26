@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchClaims } from './api';
+import { fetchClaims, deleteClaim } from './api';
 import { BotsView } from './components/BotsView';
 import { ChatView } from './components/ChatView';
 import { ClaimDrawer } from './components/ClaimDrawer';
@@ -93,7 +93,22 @@ export default function App() {
         )}
       </main>
 
-      {selected && <ClaimDrawer summary={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ClaimDrawer
+          summary={selected}
+          onClose={() => setSelected(null)}
+          onDelete={async (id) => {
+            if (!window.confirm('Czy na pewno chcesz usunąć to twierdzenie z lokalnego rejestru?')) return;
+            try {
+              await deleteClaim(id);
+              setSelected(null);
+              void refresh();
+            } catch (err) {
+              alert(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        />
+      )}
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );

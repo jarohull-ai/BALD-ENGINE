@@ -223,6 +223,22 @@ impl Service {
             .ok_or_else(|| ServiceError::NotFound(id.to_string()))
     }
 
+    pub fn delete_claim(&self, id: &str) -> Result<bool, ServiceError> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(ServiceError::NotFound("empty claim id".to_string()));
+        }
+        let resolved = self
+            .store
+            .resolve_claim_id(id)?
+            .ok_or_else(|| ServiceError::NotFound(id.to_string()))?;
+        self.store.delete_claim(&resolved).map_err(ServiceError::from)
+    }
+
+    pub fn clear_claims(&self) -> Result<usize, ServiceError> {
+        self.store.clear_claims().map_err(ServiceError::from)
+    }
+
     pub fn stats(&self) -> Result<LedgerStats, ServiceError> {
         self.store.ledger_stats().map_err(ServiceError::from)
     }
@@ -686,23 +702,15 @@ impl Service {
             }
         }
 
-        // 5. Pobierz pasujące twierdzenia ze zaktualizowanego Store
-        let all_claims = self.store.list_claims(200).unwrap_or_default();
-        let query_words: Vec<&str> = message.split_whitespace().filter(|w| w.len() > 3).collect();
-        let matching: Vec<ClaimSummary> = all_claims
-            .into_iter()
-            .filter(|c| {
-                let lower = c.text.to_lowercase();
-                query_words
-                    .iter()
-                    .any(|&w| lower.contains(&w.to_lowercase()))
-            })
-            .take(6)
-            .collect();
-
-        // 6. Jeśli skonfigurowany jest LLM, wygeneruj odpowiedź kontekstową z cytatami źródeł
+        // 5. Pobierz pasujące twierdzenia ze zaktualizowanego Store (z filtrem stop-words i trafnym scoringiem)
         let effective_config = self.effective_config()?;
         let is_embedded = effective_config.llm.provider == "embedded";
+        let all_claims = self.store.list_claims(200).unwrap_or_default();
+        let max_claims_to_match = if is_embedded { 2 } else { 6 };
+        let matching: Vec<ClaimSummary> =
+            find_relevant_claims(&all_claims, message, max_claims_to_match);
+
+        // 6. Jeśli skonfigurowany jest LLM, wygeneruj odpowiedź kontekstową z cytatami źródeł
         if let Ok(client) = build_llm_client(&effective_config) {
             let mut context_block = String::new();
 
@@ -1450,6 +1458,97 @@ fn build_fetcher(cfg: &Config, no_cache: bool) -> Result<Fetcher, anyhow::Error>
     Ok(fetcher.with_cache(cache))
 }
 
+fn is_stop_word(w: &str) -> bool {
+    const STOP_WORDS: &[&str] = &[
+        // Polish common words
+        "jest", "będzie", "było", "była", "były", "będą", "być", "został", "została", "zostało", "zostały",
+        "oraz", "przez", "tylko", "może", "można", "jaki", "jaka", "jakie", "jakich", "jakim",
+        "który", "która", "które", "których", "którym", "którego", "której",
+        "kiedy", "gdzie", "dlaczego", "czym", "czego", "kogo", "komu",
+        "tego", "temu", "tych", "tym", "taki", "taka", "takie", "takich",
+        "więc", "także", "również", "przed", "poza", "sobie", "siebie",
+        "jako", "temat", "czas", "bardzo", "wielu", "wiele",
+        "jeden", "jedna", "jedno", "jednej", "jednego",
+        "roku", "lata", "latach", "stan", "stanie", "nowy", "nowa", "nowe",
+        "mieć", "mają", "mógł", "mogła", "mogło", "mogły",
+        "tutaj", "tam", "teraz", "wtedy", "zawsze", "nigdy", "często",
+        "powiedz", "napisz", "opisz", "wyjaśnij", "pokaż", "znajdź", "chcę", "wiedzieć",
+        "wszystko", "każdy", "każda", "każde", "ponieważ", "chociaż", "dlatego",
+        "wraz", "nadal", "wśród", "choć", "mimo", "jednak", "zarówno",
+        // English common words
+        "about", "what", "which", "where", "there", "their", "from", "with",
+        "that", "this", "have", "been", "would", "could", "should", "were",
+        "when", "then", "some", "more", "most", "into", "also", "than",
+        "they", "them", "these", "those", "will", "does", "done", "doing",
+    ];
+    STOP_WORDS.contains(&w)
+}
+
+pub fn find_relevant_claims(
+    claims: &[ClaimSummary],
+    query: &str,
+    max_results: usize,
+) -> Vec<ClaimSummary> {
+    let query_terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|w| w.trim().to_lowercase())
+        .filter(|w| w.len() >= 3 && !is_stop_word(w))
+        .collect();
+
+    if query_terms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut scored: Vec<(usize, &ClaimSummary)> = claims
+        .iter()
+        .filter_map(|claim| {
+            let claim_lower = claim.text.to_lowercase();
+            let claim_words: Vec<&str> = claim_lower
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
+
+            let mut matches = 0;
+            for qt in &query_terms {
+                let qt_chars: Vec<char> = qt.chars().collect();
+                let matched = claim_words.iter().any(|cw| {
+                    let cw_chars: Vec<char> = cw.chars().collect();
+                    if qt_chars == cw_chars {
+                        true
+                    } else if qt_chars.len() >= 4 && cw_chars.len() >= 4 {
+                        let stem_len = (qt_chars.len() - 1).min(cw_chars.len() - 1).min(5);
+                        qt_chars[..stem_len] == cw_chars[..stem_len]
+                    } else {
+                        false
+                    }
+                });
+                if matched {
+                    matches += 1;
+                }
+            }
+
+            let threshold = if query_terms.len() >= 3 { 2 } else { 1 };
+            if matches >= threshold {
+                Some((matches, claim))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.document_count.cmp(&a.1.document_count))
+            .then_with(|| b.1.evidence_count.cmp(&a.1.evidence_count))
+    });
+
+    scored
+        .into_iter()
+        .take(max_results)
+        .map(|(_, c)| c.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1657,5 +1756,49 @@ mod tests {
         let defaults = extract_follow_ups(text_without, "Kraków");
         assert_eq!(defaults.len(), 3);
         assert!(defaults[0].contains("Kraków"));
+    }
+
+    #[test]
+    fn relevant_claims_filters_stopwords_and_unrelated_topics() {
+        let claims = vec![
+            ClaimSummary {
+                id: "1".to_string(),
+                text: "Chiński balon szpiegowski został zestrzelony przez myśliwiec F-22".to_string(),
+                kind: bse_core::ClaimKind::Fact,
+                status: "verified".to_string(),
+                lang: Some("pl".to_string()),
+                first_seen: "2024-01-01".to_string(),
+                last_seen: "2024-01-01".to_string(),
+                document_count: 5,
+                evidence_count: 5,
+                stances: vec![],
+            },
+            ClaimSummary {
+                id: "2".to_string(),
+                text: "Inflacja w Polsce w marcu spadła do celu inflacyjnego NBP".to_string(),
+                kind: bse_core::ClaimKind::Fact,
+                status: "verified".to_string(),
+                lang: Some("pl".to_string()),
+                first_seen: "2024-01-01".to_string(),
+                last_seen: "2024-01-01".to_string(),
+                document_count: 3,
+                evidence_count: 3,
+                stances: vec![],
+            },
+        ];
+
+        // 1. Pytanie o inflację powinno dopasować NBP/inflację, a NIE balony!
+        let matched = find_relevant_claims(&claims, "Jaka jest inflacja w Polsce?", 5);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].id, "2");
+
+        // 2. Pytanie generyczne ze samych stop-words nie powinno dopasować żadnego zanieczyszczenia
+        let empty_match = find_relevant_claims(&claims, "Co to jest i jak to działa?", 5);
+        assert!(empty_match.is_empty());
+
+        // 3. Pytanie o balony powinno dopasować balon
+        let balloon_match = find_relevant_claims(&claims, "Czy chiński balon zestrzelono?", 5);
+        assert_eq!(balloon_match.len(), 1);
+        assert_eq!(balloon_match[0].id, "1");
     }
 }

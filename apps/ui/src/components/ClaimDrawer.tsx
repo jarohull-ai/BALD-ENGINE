@@ -19,6 +19,7 @@ import {
   Scale,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UserCheck,
   X,
 } from 'lucide-react';
@@ -137,9 +138,11 @@ function EvidenceCard({
 export function ClaimDrawer({
   summary,
   onClose,
+  onDelete,
 }: {
   summary: ClaimSummary;
   onClose: () => void;
+  onDelete?: (claimId: string) => void;
 }) {
   const { t, lang } = useI18n();
   const [detail, setDetail] = useState<ClaimDetail | null>(null);
@@ -424,18 +427,33 @@ export function ClaimDrawer({
                   <span className="text-slate-700"> · sha256</span>
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void copyClaimId()}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 py-1.5 text-[10px] font-semibold text-slate-500 transition hover:border-white/15 hover:text-slate-200"
-              >
-                {copiedId ? (
-                  <Check className="h-3 w-3 text-emerald-400" />
-                ) : (
-                  <Copy className="h-3 w-3" />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyClaimId()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 py-1.5 text-[10px] font-semibold text-slate-500 transition hover:border-white/15 hover:text-slate-200"
+                >
+                  {copiedId ? (
+                    <Check className="h-3 w-3 text-emerald-400" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                  {copiedId ? t('detail.copied') : t('claims.copy')}
+                </button>
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDelete(claim.id);
+                      onClose();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-1.5 text-[10px] font-semibold text-rose-300 transition hover:bg-rose-500/20"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>{t('claims.delete')}</span>
+                  </button>
                 )}
-                {copiedId ? t('detail.copied') : t('claims.copy')}
-              </button>
+              </div>
             </div>
           </div>
         </div>

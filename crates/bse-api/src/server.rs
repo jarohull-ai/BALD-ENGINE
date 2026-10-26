@@ -156,7 +156,8 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
 fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/claims", get(claims))
-        .route("/claims/{id}", get(claim_detail))
+        .route("/claims/clear", axum::routing::post(claims_clear))
+        .route("/claims/{id}", get(claim_detail).delete(claim_delete))
         .route("/stats", get(stats))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/models/discover", get(models_discover))
@@ -212,6 +213,21 @@ async fn claim_detail(
 ) -> Result<Json<ClaimDetail>, ApiError> {
     let detail = state.service.claim(&id).map_err(ApiError::from)?;
     Ok(Json(detail))
+}
+
+async fn claim_delete(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let deleted = state.service.delete_claim(&id).map_err(ApiError::from)?;
+    Ok(Json(json!({ "deleted": deleted, "id": id })))
+}
+
+async fn claims_clear(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let count = state.service.clear_claims().map_err(ApiError::from)?;
+    Ok(Json(json!({ "cleared": count })))
 }
 
 async fn stats(State(state): State<AppState>) -> Result<Json<LedgerStats>, ApiError> {

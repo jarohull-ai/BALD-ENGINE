@@ -10,9 +10,10 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Trash2,
   X,
 } from 'lucide-react';
-import { sendChatMessage } from '../api';
+import { clearAllClaims, deleteClaim, sendChatMessage } from '../api';
 import { useI18n } from '../i18n';
 import { copyText, kindMeta, stanceMeta, stanceOrder } from '../lib';
 import type { ClaimKind, ClaimSummary, Stance } from '../types';
@@ -187,6 +188,26 @@ export function ClaimsView({
     }
   }
 
+  async function handleDeleteClaim(id: string) {
+    if (!window.confirm(t('claims.deleteConfirm'))) return;
+    try {
+      await deleteClaim(id);
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleClearAll() {
+    if (!window.confirm(t('claims.clearAllConfirm', { count: claims.length }))) return;
+    try {
+      await clearAllClaims();
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase(lang === 'pl' ? 'pl-PL' : 'en-GB');
     const rows = claims.filter((claim) => {
@@ -240,15 +261,28 @@ export function ClaimsView({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={loading}
-          className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-4 py-2.5 text-xs font-semibold text-slate-300 transition hover:border-amber-300/25 hover:bg-amber-400/[0.06] hover:text-amber-100 disabled:cursor-wait disabled:opacity-50"
-        >
-          {loading ? <Spinner className="text-amber-300" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          {t('claims.refresh')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {claims.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleClearAll()}
+              disabled={loading}
+              className="inline-flex w-fit items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-2.5 text-xs font-semibold text-rose-300 transition hover:border-rose-500/40 hover:bg-rose-500/20 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t('claims.clearAll')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-4 py-2.5 text-xs font-semibold text-slate-300 transition hover:border-amber-300/25 hover:bg-amber-400/[0.06] hover:text-amber-100 disabled:cursor-wait disabled:opacity-50"
+          >
+            {loading ? <Spinner className="text-amber-300" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            {t('claims.refresh')}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -420,7 +454,13 @@ export function ClaimsView({
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {filtered.map((claim, index) => (
-                <ClaimCard key={claim.id} claim={claim} index={index} onOpen={onOpen} />
+                <ClaimCard
+                  key={claim.id}
+                  claim={claim}
+                  index={index}
+                  onOpen={onOpen}
+                  onDelete={handleDeleteClaim}
+                />
               ))}
             </div>
           )}
