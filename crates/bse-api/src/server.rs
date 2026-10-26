@@ -30,7 +30,7 @@ use crate::service::{
 use crate::settings::{SettingsError, SettingsUpdate, SettingsView};
 use bse_store::{BotRunRecord, ClaimDetail, LedgerStats, NewResearchBot, ResearchBot};
 
-static EMBEDDED_UI: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../apps/ui/dist");
+static EMBEDDED_UI: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/ui_dist");
 
 #[derive(Debug, Clone)]
 pub struct ServeOptions {
