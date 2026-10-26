@@ -932,14 +932,20 @@ impl Store {
         Ok(list)
     }
 
+    /// Sprawdza, czy dokument o podanym URL został już pobrany i przeanalizowany
+    /// (czy posiada uzupełnione pole `fetched_at`, a nie jest tylko nieodwiedzonym wynikiem wyszukiwania).
     pub fn has_document(&self, canonical_url: &str) -> Result<bool, StoreError> {
         let conn = self.conn.lock().map_err(|_| StoreError::Lock)?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM documents WHERE canonical_url = ?1",
+            "SELECT COUNT(*) FROM documents WHERE canonical_url = ?1 AND fetched_at IS NOT NULL",
             params![canonical_url],
             |r| r.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    pub fn has_ingested_url(&self, canonical_url: &str) -> Result<bool, StoreError> {
+        self.has_document(canonical_url)
     }
 }
 

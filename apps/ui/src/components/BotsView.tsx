@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
+  ArrowRight,
   Bot,
   CheckCircle2,
   Clock,
+  Database,
   History,
   LoaderCircle,
   Pause,
@@ -22,7 +24,11 @@ import { cn, formatTimestamp } from '../lib';
 import type { BotRunRecord, NewResearchBot, ResearchBot } from '../types';
 import { Badge, inputClass, labelClass, selectClass } from './ui';
 
-export function BotsView() {
+interface BotsViewProps {
+  onNavigateToLedger?: () => void;
+}
+
+export function BotsView({ onNavigateToLedger }: BotsViewProps = {}) {
   const { t } = useI18n();
   const [bots, setBots] = useState<ResearchBot[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,6 +159,19 @@ export function BotsView() {
         </div>
 
         <div className="flex items-center gap-2">
+          {onNavigateToLedger && (
+            <button
+              type="button"
+              onClick={onNavigateToLedger}
+              className="flex items-center gap-1.5 rounded-xl border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-400/15"
+              title="Przejdź do Rejestru Twierdzeń"
+            >
+              <Database className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Rejestr Twierdzeń</span>
+              <ArrowRight className="h-3 w-3" />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => void loadBots()}
@@ -171,6 +190,18 @@ export function BotsView() {
             <Plus className="h-4 w-4" />
             <span>{t('bots.newBot')}</span>
           </button>
+        </div>
+      </div>
+
+      {/* Informative banner on how bots store evidence */}
+      <div className="flex items-start gap-3 rounded-2xl border border-amber-400/15 bg-gradient-to-r from-amber-400/[0.04] to-transparent p-4 text-xs text-slate-300">
+        <Sparkles className="h-5 w-5 shrink-0 text-amber-400 mt-0.5" />
+        <div className="flex-1 space-y-1">
+          <p className="font-semibold text-white">Gdzie trafiają informacje zebrane przez boty?</p>
+          <p className="text-slate-400 leading-relaxed">
+            Boty badawcze przeczesują sieć wg zadanego interwału. Każde nowe źródło jest pobierane, weryfikowane przez potok klasyfikacji i automatycznie zapisywane w{' '}
+            <strong className="text-amber-300">Rejestrze Twierdzeń (Evidence Ledger)</strong> z pełnymi cytatami, powiązanymi podmiotami i odnośnikami do źródeł. Historię każdego przebiegu (status, zbadane URL, dodane twierdzenia) sprawdzisz klikając przycisk <span className="font-semibold text-slate-200">„Historia”</span> na karcie bota.
+          </p>
         </div>
       </div>
 
@@ -380,10 +411,23 @@ export function BotsView() {
                     </div>
                     <div>
                       <span className="text-slate-500">{t('bots.claimsFound')}</span>
-                      <p className="flex items-center gap-1 font-semibold text-amber-300">
-                        <Sparkles className="h-3 w-3" />
-                        {bot.claims_found}
-                      </p>
+                      {bot.claims_found > 0 && onNavigateToLedger ? (
+                        <button
+                          type="button"
+                          onClick={onNavigateToLedger}
+                          className="flex items-center gap-1 font-semibold text-amber-300 hover:text-amber-200 hover:underline transition"
+                          title="Otwórz Rejestr Twierdzeń"
+                        >
+                          <Sparkles className="h-3 w-3" />
+                          <span>{bot.claims_found}</span>
+                          <ArrowRight className="h-2.5 w-2.5 opacity-70" />
+                        </button>
+                      ) : (
+                        <p className="flex items-center gap-1 font-semibold text-amber-300">
+                          <Sparkles className="h-3 w-3" />
+                          {bot.claims_found}
+                        </p>
+                      )}
                     </div>
                     <div className="col-span-2 border-t border-white/5 pt-2">
                       <span className="text-slate-500">{t('bots.lastRun')}</span>
@@ -527,6 +571,26 @@ export function BotsView() {
                         </div>
                       </div>
 
+                      {r.urls_checked === 0 && isSuccess && (
+                        <p className="text-[11px] text-slate-500 italic">
+                          Brak nowych nieprzebadanych źródeł (wszystkie znalezione URL zostały już przeanalizowane we wcześniejszych cyklach).
+                        </p>
+                      )}
+
+                      {r.claims_added > 0 && onNavigateToLedger && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHistoryBot(null);
+                            onNavigateToLedger();
+                          }}
+                          className="flex items-center gap-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300 transition"
+                        >
+                          <span>Zobacz nowe twierdzenia w Rejestrze</span>
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                      )}
+
                       {r.error_msg && (
                         <p className="rounded bg-rose-500/10 p-2 text-[11px] text-rose-300 border border-rose-500/20">
                           {r.error_msg}
@@ -538,7 +602,21 @@ export function BotsView() {
               )}
             </div>
 
-            <div className="border-t border-white/10 pt-4">
+            <div className="border-t border-white/10 pt-4 space-y-2">
+              {onNavigateToLedger && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistoryBot(null);
+                    onNavigateToLedger();
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-amber-400/30 bg-amber-400/10 py-2.5 text-xs font-semibold text-amber-300 hover:bg-amber-400/20 transition"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Otwórz Rejestr Twierdzeń (Evidence Ledger)</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setHistoryBot(null)}

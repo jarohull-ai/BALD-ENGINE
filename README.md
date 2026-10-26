@@ -79,6 +79,10 @@ Jeszcze nie ma: grafu narracji, diffów archiwum, własnego headless browsera (P
 - **Problem:** Po otrzymaniu odpowiedzi użytkownik musiał ręcznie wymyślać kolejne zapytania, aby zgłębić lokalne tajemnice lub wątki poboczne.
 - **Rozwiązanie:** Silnik po każdej odpowiedzi generuje 3 intrygujące, konkretne kierunki dalszego śledztwa, renderowane w UI jako klikalne przyciski (pigułki). Kliknięcie dowolnej propozycji natychmiast uruchamia kolejne dochodzenie sieciowe.
 
+### 7. Cykliczne Boty Badawcze i Magazyn Evidence Ledger
+- **Problem:** Wcześniejsza logika weryfikacji unikalności sprawdzała `has_document` w oparciu o samą tabelę `documents`, do której zapisywany był wstępny indeks wyszukiwania. W efekcie boty natychmiast uznawały znalezione linki za „już istniejące” i kończyły przebieg z `urls_checked: 0, claims_added: 0`.
+- **Rozwiązanie:** Zaktualizowano `has_document` w `bse-store`, by sprawdzał faktycznie pobrane dokumenty (`fetched_at IS NOT NULL`). Teraz boty w tle autonomicznie pobierają treść stron, przeprowadzają klasyfikację i zasilają centralny **Rejestr Twierdzeń (Evidence Ledger)** z cytatami i powiązaniami. W UI dodano banner informacyjny, bezpośrednie przejście do Rejestru z kart i historii bota oraz czytelne opisy w szufladzie historii przebiegów.
+
 ## Szybki start
 
 ```bash

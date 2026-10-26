@@ -79,7 +79,12 @@ export default function App() {
             />
           </div>
         ) : screen === 'bots' ? (
-          <BotsView />
+          <BotsView
+            onNavigateToLedger={() => {
+              void refresh();
+              navigate('claims');
+            }}
+          />
         ) : (
           <SettingsView />
         )}
