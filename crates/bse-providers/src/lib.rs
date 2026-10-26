@@ -5,11 +5,13 @@
 
 pub mod brave;
 pub mod demo;
+pub mod duckduckgo;
 pub mod searxng;
 pub mod wikipedia;
 
 pub use brave::BraveProvider;
 pub use demo::DemoProvider;
+pub use duckduckgo::DuckDuckGoProvider;
 pub use searxng::SearxngProvider;
 pub use wikipedia::WikipediaProvider;
 

@@ -363,6 +363,9 @@ const KNOWN_ENTITIES: &[(&str, EntityKind)] = &[
     ("Bruksela", EntityKind::Location),
     ("COVID-19", EntityKind::Event),
     ("Great Reset", EntityKind::Event),
+    ("Klaus Schwab", EntityKind::PublicActor),
+    ("Edward Snowden", EntityKind::PublicActor),
+    ("Rob Brotherton", EntityKind::PublicActor),
 ];
 
 fn known_entities(text: &str) -> Vec<ClassifiedEntity> {

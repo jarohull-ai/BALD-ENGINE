@@ -45,11 +45,12 @@ impl ClaimKind {
     }
 }
 
-/// Encje są celowo **nieosobowe**. `Person`/`PublicActor` nie istnieją w tym
-/// enumie, żeby ledger nie stawał się kartoteką osób.
+/// Encje w ledgerze dowodowym. Obejmują organizacje, lokalizacje, dzieła oraz
+/// postacie publiczne (aktorów narracji: polityków, ekspertów, autorów, instytucje).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityKind {
+    PublicActor,
     Organization,
     Location,
     Event,
@@ -63,6 +64,7 @@ pub enum EntityKind {
 impl EntityKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            EntityKind::PublicActor => "public_actor",
             EntityKind::Organization => "organization",
             EntityKind::Location => "location",
             EntityKind::Event => "event",
@@ -74,10 +76,13 @@ impl EntityKind {
         }
     }
 
-    /// Mapowanie odpowiedzi LLM. Wszystko, co wygląda na osobę, zwraca `None`
-    /// i jest odrzucane przez klasyfikator.
+    /// Mapowanie odpowiedzi LLM.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "public_actor" | "public-actor" | "person" | "actor" | "politician" | "author"
+            | "expert" | "leader" | "figure" | "official" | "individual" => {
+                Some(EntityKind::PublicActor)
+            }
             "organization" | "organisation" | "institution" | "org" | "company" => {
                 Some(EntityKind::Organization)
             }
@@ -88,8 +93,6 @@ impl EntityKind {
             "law" | "legislation" | "regulation" => Some(EntityKind::Law),
             "work" | "book" | "film" | "article" => Some(EntityKind::Work),
             "other" | "unknown" => Some(EntityKind::Other),
-            "person" | "people" | "public_actor" | "public-actor" | "private_individual"
-            | "private-individual" | "individual" | "human" => None,
             _ => None,
         }
     }

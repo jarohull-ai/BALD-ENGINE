@@ -9,6 +9,7 @@ export type ClaimKind =
   | 'other';
 
 export type EntityKind =
+  | 'public_actor'
   | 'organization'
   | 'location'
   | 'event'
@@ -188,6 +189,13 @@ export interface IngestResponse {
   generated_at: string;
 }
 
+export interface ChatSource {
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+}
+
 export interface ChatMessageItem {
   id: string;
   role: 'user' | 'assistant';
@@ -196,6 +204,9 @@ export interface ChatMessageItem {
   guardRefused?: boolean;
   ingest?: IngestResponse;
   matchingClaims?: ClaimSummary[];
+  sources?: ChatSource[];
+  autoResearched?: boolean;
+  newClaimsCount?: number;
   createdAt: string;
 }
 
@@ -211,6 +222,9 @@ export interface ChatResponse {
   guard_refused: boolean;
   ingest?: IngestResponse;
   matching_claims: ClaimSummary[];
+  sources?: ChatSource[];
+  auto_researched?: boolean;
+  new_claims_count?: number;
 }
 
 export interface SearchHit {

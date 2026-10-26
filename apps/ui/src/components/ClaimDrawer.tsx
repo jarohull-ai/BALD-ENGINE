@@ -19,6 +19,7 @@ import {
   Scale,
   ShieldCheck,
   Sparkles,
+  UserCheck,
   X,
 } from 'lucide-react';
 import { fetchClaim } from '../api';
@@ -28,6 +29,7 @@ import type { ClaimDetail, ClaimSummary, EntityKind, EvidenceItem } from '../typ
 import { Badge, Spinner } from './ui';
 
 const entityIcons: Record<EntityKind, typeof Building2> = {
+  public_actor: UserCheck,
   organization: Building2,
   location: MapPin,
   event: CalendarRange,

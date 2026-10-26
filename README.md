@@ -19,7 +19,7 @@ Działa:
 - **Person guard** — deterministyczne reguły PL/EN, obfuskacja (leetspeak), fail-closed.
 - **Audit trail** — hash chain SHA-256, weryfikacja `bald audit verify`, bez surowych PII.
 - **Citation gate** — exact/normalized + próg Jaccard ≥ 0,92; `bald citation check`.
-- **Providerzy**: SearXNG (JSON), Brave Web Search, Demo (offline).
+- **Providerzy**: DuckDuckGo HTML (bezkluczowy crawler sieci na żywo), SearXNG (JSON), Brave Web Search, Wikipedia API (PL & EN), Demo (offline fallback).
 - **Fetch**: `bse-fetch` z polityką SSRF, walidacją każdego redirectu, limitami, robots.txt, cache i
   heurystyczną ekstrakcją HTML (bez JavaScriptu).
 - **Indeks**: Tantivy/BM25, `bald index add/search/stats`, upsert po SHA-256 kanonicznego URL.
@@ -28,23 +28,48 @@ Działa:
   (MinHash/LSH) + metryka różnorodności domen.
 - **Ekstrakcja twierdzeń**: `bald evidence add/list/show/stats`; Ollama
   (`/api/chat`) lub OpenAI-compatible (`/chat/completions`), deterministyczny fallback
-  `heuristic-v1`, stance `reports/endorses/debunks/mentions`, encje tylko nie-osobowe.
+  `heuristic-v1`, stance `reports/endorses/debunks/mentions`. Zachowuje postacie publiczne (`EntityKind::PublicActor`), eliminując wyłącznie doxxing osób prywatnych (PESEL, adresy domowe).
 - **Evidence ledger**: SQLite `claims`/`evidence`/`entities`; do bazy trafia wyłącznie
   twierdzenie z cytatem potwierdzonym przez `CitationGate` (exact/normalized) i mającym
   min. 24 znaki. Odrzucone twierdzenia są tylko w raporcie.
 - **Lokalne Web UI (`bald serve`)**: nowoczesny interfejs React + TypeScript + Tailwind + Lucide
   wbudowany bezpośrednio w plik binarny `bald`. Uruchamia się na `http://127.0.0.1:7333` z zabezpieczeniem tokenem
   sesyjnym przeciwko CSRF. Działa na każdym systemie bez wymogu instalacji WebKitGTK.
-- **Asystent Czat & Wyszukiwarka Sieciowa w UI**: badanie źródeł 1-kliknięciem, weryfikacja cytatów w czasie rzeczywistym i eksport raportów dowodowych do Markdown / PDF.
-- **Bot Researcher (Autonomiczny monitoring tematów)**: konfigurowalne boty badawcze działające cyklicznie w tle, automatycznie przeszukujące sieć (SearXNG/Brave) i zasilające Evidence Ledger nowo zweryfikowanymi twierdzeniami.
+- **Autonomiczne Badanie Sieci (Perplexity / Firecrawl-grade Auto-Research)**: czat i rejestr twierdzeń badają otwartą sieć na żywo, pobierają cytaty, automatycznie zasilają Evidence Ledger i generują odpowiedzi z numerowanymi odnośnikami `[1]`, `[2]` oraz interaktywną półką źródeł (Sources shelf).
+- **Interaktywny Rejestr Twierdzeń (Evidence Ledger UI)**: wyszukiwarka tematów z przyciskiem 1-kliknięciem `[Zbadaj w sieci]`, natychmiastowe zasilanie bazy i podpowiedzi tematów badawczych.
+- **Bot Researcher (Autonomiczny monitoring tematów)**: konfigurowalne boty badawcze działające cyklicznie w tle, automatycznie przeszukujące sieć i zasilające Evidence Ledger nowo zweryfikowanymi twierdzeniami.
 - **Tauri 2**: desktop shell podłączony do tego samego serwisu API przez IPC.
 
 Zapytania `Allow` są zapisywane lokalnie w SQLite (surowy tekst + hash) na potrzeby
 historii; zapytania `Refuse/Review` nie są zapisywane, tylko hashowane w audit logu.
 Cache i indeks są lokalne, z uprawnieniami `0700/0600` na Unixie.
 
-Jeszcze nie ma: grafu narracji, diffów archiwum, własnego crawlera, harmonogramu odświeżania,
-renderowania JavaScript (Playwright/render API), embeddingów/HNSW i Tor/onion.
+Jeszcze nie ma: grafu narracji, diffów archiwum, własnego headless browsera (Playwright/render API), embeddingów/HNSW i Tor/onion.
+
+## Architektura Badawcza (Dla Team Panda — Co i dlaczego zmieniono)
+
+> [!NOTE]
+> Po testach przeprowadzonych przez zespół BaldTV (`@BaldTV`) wyeliminowano nadgorliwe obwarowania i przekształcono BALD w suwerenny silnik badawczy klasy Perplexity / Firecrawl.
+
+### 1. Weryfikacja Aktorów Publicznych (`EntityKind::PublicActor`)
+- **Problem:** Wcześniejsza implementacja zasady „Temat tak, osoba nie” bezwzględnie wycinała wszystkie nazwiska, w tym autorów książek, badaczy, polityków i sygnalistów (np. Klaus Schwab, Rob Brotherton, Edward Snowden).
+- **Rozwiązanie:** Dodano wariant `EntityKind::PublicActor`. Prompt klasyfikatora i filtry PII chronią wyłącznie **osoby prywatne** (blokada doxxingu, adresów domowych, PESEL, prywatnych numerów telefonów). Postacie publiczne, autorzy i decydenci są w pełni rejestrowani w dowodach i odpowiedziach modelu.
+
+### 2. Bezkluczowy Live Web Crawler (`DuckDuckGoProvider`)
+- **Problem:** Gdy lokalny SearXNG lub płatne API Brave były wyłączone, wyszukiwanie sieciowe opierało się na offline fixtures lub samej Wikipedii.
+- **Rozwiązanie:** Zaimplementowano natywny `DuckDuckGoProvider` (`crates/bse-providers/src/duckduckgo.rs`), który odpytuje otwarty punkt końcowy HTML, dekoduje przekierowania (`uddg=`) i wyciąga świeże linki oraz snippety bez żadnych kluczy API czy kontenerów Docker.
+
+### 3. Autonomiczne zasilanie Evidence Ledger w Czacie (Auto-Research)
+- **Problem:** Nowo uruchomiony BALD posiadał pustą bazę twierdzeń, a czat zwracał szablonową odpowiedź o braku materiału źródłowego.
+- **Rozwiązanie:** Gdy użytkownik zadaje w Czacie pytanie lub podaje temat, silnik:
+  1. Wykonuje badanie sieci na żywo (DuckDuckGo + Wikipedia).
+  2. Pobiera i weryfikuje cytaty z czołowych źródeł (CitationGate).
+  3. Automatycznie zapisuje zweryfikowane twierdzenia do lokalnego Evidence Ledgera (SQLite).
+  4. Generuje syntezę z numerowanymi odsyłaczami `[1]`, `[2]`, pełnymi linkami oraz interaktywną listą źródeł w UI.
+
+### 4. Aktywny Rejestr Twierdzeń w UI
+- **Problem:** Przy pustym Rejestrze użytkownik widział jedynie instrukcję CLI, a brak pasujących filtrów blokował badanie.
+- **Rozwiązanie:** Wbudowano formularz natychmiastowego badania tematu `[Zbadaj w sieci]` bezpośrednio w widoku Rejestru, wraz z gotowymi przykładami i obsługą dowolnych zapytań badawczych.
 
 ## Szybki start
 

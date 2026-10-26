@@ -6,11 +6,13 @@ import {
   Check,
   Copy,
   FilterX,
+  Globe,
   RefreshCw,
   Search,
   ShieldCheck,
   X,
 } from 'lucide-react';
+import { sendChatMessage } from '../api';
 import { useI18n } from '../i18n';
 import { copyText, kindMeta, stanceMeta, stanceOrder } from '../lib';
 import type { ClaimKind, ClaimSummary, Stance } from '../types';
@@ -44,9 +46,16 @@ function SkeletonCard() {
   );
 }
 
-function EmptyLedger() {
+function EmptyLedger({
+  onResearch,
+  researching,
+}: {
+  onResearch: (topic: string) => void;
+  researching: boolean;
+}) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  const [topicInput, setTopicInput] = useState('');
   const command = t('claims.emptyCommand');
 
   async function copy() {
@@ -56,26 +65,79 @@ function EmptyLedger() {
     }
   }
 
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (topicInput.trim()) {
+      onResearch(topicInput.trim());
+    }
+  }
+
+  const suggestions = [
+    'Bunkry i schrony w Polsce',
+    'The Great Reset — Klaus Schwab',
+    'Projekt MKUltra fakty',
+    'Operacja Northwoods',
+  ];
+
   return (
-    <div className="animate-rise relative overflow-hidden rounded-3xl border border-dashed border-white/10 bg-white/[0.018] px-6 py-14 text-center">
+    <div className="animate-rise relative overflow-hidden rounded-3xl border border-dashed border-white/10 bg-white/[0.018] px-6 py-10 text-center">
       <div className="pointer-events-none absolute left-1/2 top-0 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400/10 blur-3xl" />
       <div className="relative mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-300/15 bg-amber-400/[0.06]">
         <BookOpenText className="h-6 w-6 text-amber-300/70" />
       </div>
-      <h3 className="relative mt-5 text-lg font-semibold text-slate-200">
+      <h3 className="relative mt-4 text-lg font-semibold text-slate-200">
         {t('claims.emptyTitle')}
       </h3>
-      <p className="relative mx-auto mt-2 max-w-lg text-sm leading-relaxed text-slate-500">
-        {t('claims.emptyBody')}
+      <p className="relative mx-auto mt-2 max-w-lg text-xs leading-relaxed text-slate-400">
+        Rejestr jest gotowy do gromadzenia dowodów. Wpisz temat lub wklej link, aby silnik BALD zbadał otwartą sieć, zweryfikował cytaty źródłowe i automatycznie zapisał twierdzenia:
       </p>
-      <div className="relative mx-auto mt-6 flex max-w-xl flex-col items-stretch gap-2 sm:flex-row">
-        <code className="scrollbar-thin flex-1 overflow-x-auto rounded-xl border border-white/10 bg-black/35 px-4 py-3 text-left font-mono text-[11px] text-amber-200/80">
+
+      {/* Live web investigation form */}
+      <form onSubmit={handleSubmit} className="relative mx-auto mt-6 flex max-w-lg items-center gap-2">
+        <div className="relative flex-1">
+          <input
+            type="text"
+            value={topicInput}
+            onChange={(e) => setTopicInput(e.target.value)}
+            disabled={researching}
+            placeholder="Wpisz temat (np. Bunkry w Polsce, Klaus Schwab) lub wklej URL..."
+            className="w-full rounded-xl border border-white/15 bg-black/40 px-3.5 py-2.5 text-xs text-slate-200 placeholder-slate-500 transition focus:border-amber-400/40 focus:outline-none"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={researching || !topicInput.trim()}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/30 bg-amber-400/15 px-4 py-2.5 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/25 disabled:opacity-40"
+        >
+          {researching ? <Spinner className="h-3.5 w-3.5 text-amber-300" /> : <Globe className="h-3.5 w-3.5 text-amber-300" />}
+          <span>{researching ? 'Badanie sieci...' : 'Zbadaj w sieci'}</span>
+        </button>
+      </form>
+
+      {/* Quick suggestions */}
+      <div className="relative mt-3 flex flex-wrap justify-center gap-1.5">
+        <span className="text-[11px] text-slate-500 self-center">Przykłady:</span>
+        {suggestions.map((s, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => onResearch(s)}
+            disabled={researching}
+            className="rounded-lg border border-white/[0.06] bg-white/[0.025] px-2.5 py-1 text-[11px] text-slate-400 transition hover:border-amber-400/30 hover:text-amber-200 disabled:opacity-40"
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      <div className="relative mx-auto mt-8 flex max-w-xl flex-col items-stretch gap-2 border-t border-white/[0.06] pt-6 sm:flex-row">
+        <code className="scrollbar-thin flex-1 overflow-x-auto rounded-xl border border-white/10 bg-black/35 px-4 py-2 text-left font-mono text-[10px] text-amber-200/80">
           {command}
         </code>
         <button
           type="button"
           onClick={copy}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/[0.07]"
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/[0.07]"
         >
           {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? t('claims.copied') : t('claims.copy')}
@@ -83,7 +145,7 @@ function EmptyLedger() {
       </div>
       <p className="relative mt-4 inline-flex items-center gap-1.5 text-[10px] text-slate-600">
         <ShieldCheck className="h-3 w-3 text-emerald-500/60" />
-        CitationGate · robots.txt · SSRF policy
+        CitationGate · robots.txt · SSRF policy · Zero-doxx OSINT
       </p>
     </div>
   );
@@ -107,6 +169,23 @@ export function ClaimsView({
   const [kind, setKind] = useState<ClaimKind | 'all'>('all');
   const [stance, setStance] = useState<Stance | 'all'>('all');
   const [sort, setSort] = useState<'sources' | 'recent' | 'newest'>('sources');
+  const [researching, setResearching] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
+
+  async function handleLiveResearch(topic: string) {
+    const trimmed = topic.trim();
+    if (!trimmed || researching) return;
+    setResearching(true);
+    setResearchError(null);
+    try {
+      await sendChatMessage({ message: trimmed });
+      onRefresh();
+    } catch (err) {
+      setResearchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResearching(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase(lang === 'pl' ? 'pl-PL' : 'en-GB');
@@ -191,8 +270,20 @@ export function ClaimsView({
         </div>
       )}
 
+      {researchError && (
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-400/20 bg-rose-400/[0.06] px-4 py-3.5">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-rose-200">{t('error.title')}</p>
+            <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-rose-300/70">
+              {researchError}
+            </p>
+          </div>
+        </div>
+      )}
+
       {showEmpty ? (
-        <EmptyLedger />
+        <EmptyLedger onResearch={handleLiveResearch} researching={researching} />
       ) : (
         <>
           <div className="animate-rise rounded-2xl border border-white/[0.07] bg-white/[0.018] p-3 [animation-delay:40ms]">
@@ -299,13 +390,29 @@ export function ClaimsView({
               ))}
             </div>
           ) : showNoMatch ? (
-            <div className="rounded-2xl border border-dashed border-white/10 px-6 py-14 text-center">
+            <div className="rounded-2xl border border-dashed border-white/10 px-6 py-12 text-center">
               <FilterX className="mx-auto h-6 w-6 text-slate-600" />
               <p className="mt-3 text-sm text-slate-400">{t('claims.noMatch')}</p>
+              {query.trim() && (
+                <div className="mt-4 flex flex-col items-center gap-2">
+                  <p className="text-xs text-slate-500">
+                    Brak wyników w lokalnej bazie. Chcesz, aby BALD zbadał ten temat na żywo w otwartej sieci?
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleLiveResearch(query)}
+                    disabled={researching}
+                    className="inline-flex items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/15 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/25 disabled:opacity-50"
+                  >
+                    {researching ? <Spinner className="h-3.5 w-3.5 text-amber-300" /> : <Globe className="h-3.5 w-3.5 text-amber-300" />}
+                    <span>{researching ? 'Badanie sieci w toku...' : `Zbadaj „${query}” na żywo w sieci`}</span>
+                  </button>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={clearFilters}
-                className="mt-4 rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-white/5"
+                className="mt-4 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-white/5"
               >
                 {t('claims.clearFilters')}
               </button>

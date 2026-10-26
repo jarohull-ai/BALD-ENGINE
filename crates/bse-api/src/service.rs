@@ -18,7 +18,9 @@ use bse_fetch::{FetchCache, FetchOptions, Fetcher};
 use bse_guard::{AuditLog, RulesGate};
 use bse_llm::{Llm, LlmClient, LlmProvider, LlmSettings};
 use bse_pipeline::{domain_of, EvidenceOptions, EvidencePipeline, SearchEngine, SearchOptions};
-use bse_providers::{BraveProvider, DemoProvider, SearxngProvider, WikipediaProvider};
+use bse_providers::{
+    BraveProvider, DemoProvider, DuckDuckGoProvider, SearxngProvider, WikipediaProvider,
+};
 use bse_store::{
     BotRunRecord, ClaimDetail, ClaimSummary, LedgerStats, NewResearchBot, ResearchBot, RunStore,
     Store, StoreError,
@@ -89,6 +91,14 @@ pub struct IngestResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSource {
+    pub title: String,
+    pub url: String,
+    pub domain: String,
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
     pub role: String,
     pub content: String,
@@ -96,6 +106,12 @@ pub struct ChatResponse {
     pub guard_refused: bool,
     pub ingest: Option<IngestResponse>,
     pub matching_claims: Vec<ClaimSummary>,
+    #[serde(default)]
+    pub sources: Vec<ChatSource>,
+    #[serde(default)]
+    pub auto_researched: bool,
+    #[serde(default)]
+    pub new_claims_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,6 +303,9 @@ impl Service {
                 guard_refused: false,
                 ingest: None,
                 matching_claims: Vec::new(),
+                sources: Vec::new(),
+                auto_researched: false,
+                new_claims_count: 0,
             });
         }
 
@@ -302,6 +321,7 @@ impl Service {
                         ingest_resp.claims_accepted,
                         ingest_resp.claims_rejected,
                     );
+                    let count = ingest_resp.claims_accepted;
                     return Ok(ChatResponse {
                         role: "assistant".to_string(),
                         content: text,
@@ -309,6 +329,9 @@ impl Service {
                         guard_refused: false,
                         ingest: Some(ingest_resp),
                         matching_claims: Vec::new(),
+                        sources: Vec::new(),
+                        auto_researched: false,
+                        new_claims_count: count,
                     });
                 }
                 Err(err) => {
@@ -319,6 +342,9 @@ impl Service {
                         guard_refused: false,
                         ingest: None,
                         matching_claims: Vec::new(),
+                        sources: Vec::new(),
+                        auto_researched: false,
+                        new_claims_count: 0,
                     });
                 }
             }
@@ -335,15 +361,53 @@ impl Service {
         if matches!(verdict.decision, GateDecision::Refuse) {
             return Ok(ChatResponse {
                 role: "assistant".to_string(),
-                content: "Zgodnie z nadrzędną zasadą BALD (**„Temat tak, osoba nie”**), zapytania ukierunkowane na osoby prywatne są blokowane. Chronimy prywatność i nie profilujemy osób.\n\nMożesz zapytać o zjawiska, organizacje, wydarzenia, twierdzenia i teorie — z chęcią je zbadam.".to_string(),
+                content: "Zgodnie z nadrzędną zasadą BALD (**„Temat tak, osoba nie”**), zapytania ukierunkowane na profilowanie osób prywatnych są blokowane. Chronimy prywatność i nie profilujemy osób.\n\nMożesz zapytać o zjawiska, organizacje, wydarzenia, twierdzenia, autorów książek i postacie publiczne — z chęcią je zbadam.".to_string(),
                 is_url: false,
                 guard_refused: true,
                 ingest: None,
                 matching_claims: Vec::new(),
+                sources: Vec::new(),
+                auto_researched: false,
+                new_claims_count: 0,
             });
         }
 
-        // 3. Wyszukaj powiązane twierdzenia w lokalnym Store
+        // 3. Live Web Research (Perplexity style):
+        // Jeśli to zapytanie/temat (do 16 słów), zbadaj sieć na żywo za pomocą aktywnych dostawców (DuckDuckGo, Wikipedia, Searxng)
+        let word_count = message.split_whitespace().count();
+        let is_search_topic = word_count <= 16;
+
+        let mut live_sources: Vec<ChatSource> = Vec::new();
+        let mut new_claims_added = 0;
+
+        if is_search_topic {
+            if let Ok(search_resp) = self.search_web(message, 6).await {
+                for hit in search_resp.hits {
+                    if (hit.url.starts_with("http://") || hit.url.starts_with("https://"))
+                        && !hit.url.contains("example.com")
+                    {
+                        live_sources.push(ChatSource {
+                            title: hit.title,
+                            url: hit.url,
+                            domain: hit.domain,
+                            snippet: hit.snippet,
+                        });
+                    }
+                }
+            }
+
+            // Auto-ingest top 2 web sources do Rejestru Twierdzeń (z limitem czasu 3s na źródło)
+            for src in live_sources.iter().take(2) {
+                if let Ok(Ok(ing)) =
+                    tokio::time::timeout(std::time::Duration::from_secs(3), self.ingest(&src.url))
+                        .await
+                {
+                    new_claims_added += ing.claims_accepted;
+                }
+            }
+        }
+
+        // 5. Pobierz pasujące twierdzenia ze zaktualizowanego Store
         let all_claims = self.store.list_claims(200).unwrap_or_default();
         let query_words: Vec<&str> = message.split_whitespace().filter(|w| w.len() > 3).collect();
         let matching: Vec<ClaimSummary> = all_claims
@@ -357,16 +421,31 @@ impl Service {
             .take(6)
             .collect();
 
-        // 4. Jeśli skonfigurowany jest LLM, wygeneruj odpowiedź kontekstową
+        // 6. Jeśli skonfigurowany jest LLM, wygeneruj odpowiedź kontekstową z cytatami źródeł
         let effective_config = self.effective_config()?;
         if let Ok(client) = build_llm_client(&effective_config) {
             let mut context_block = String::new();
-            if !matching.is_empty() {
-                context_block.push_str("\n\nZnane twierdzenia w lokalnej bazie BALD:\n");
-                for (i, c) in matching.iter().enumerate() {
+
+            if !live_sources.is_empty() {
+                context_block
+                    .push_str("\n\nAKTUALNE ŹRÓDŁA Z INTERNETU (cytuj jako [1], [2] itp.):\n");
+                for (i, s) in live_sources.iter().enumerate() {
                     context_block.push_str(&format!(
-                        "{}. [{}] \"{}\" (źródeł: {}, cytatów: {})\n",
+                        "[{}] \"{}\" ({}) - {}\nURL: {}\n\n",
                         i + 1,
+                        s.title,
+                        s.domain,
+                        s.snippet,
+                        s.url
+                    ));
+                }
+            }
+
+            if !matching.is_empty() {
+                context_block.push_str("\n\nZWERYFIKOWANE TWIERDZENIA W REJESTRZE BALD:\n");
+                for c in matching.iter() {
+                    context_block.push_str(&format!(
+                        "- [{}] \"{}\" (liczba źródeł: {}, cytatów: {})\n",
                         c.kind.as_str(),
                         c.text,
                         c.document_count,
@@ -375,8 +454,15 @@ impl Service {
                 }
             }
 
-            let system = "Jesteś analitycznym asystentem BALD (Claim, Narrative & Source Evidence Engine). Twoim zadaniem jest pomaganie użytkownikowi w dociekaniu faktów, analizie narracji i źródeł w sposób rzeczowy, neutralny i obiektywny. Nie moralizuj, nie osądzaj prawdy świata. Zawsze skupiaj się na tym, co mówią źródła. Jeśli wiesz, że brak materiału źródłowego, otwarcie to powiedz i zaproponuj wklejenie linku do artykułu.";
-            let prompt = format!("Pytanie użytkownika: {message}{context_block}");
+            let system = "Jesteś BALD — autonomicznym silnikiem badawczym OSINT i weryfikacji faktów (Claim, Narrative & Source Evidence Engine), działającym na poziomie Perplexity/Firecrawl.\n\
+            ZASADY ANALIZY:\n\
+            1. Każdy fakt i twierdzenie popieraj numerowanym odnośnikiem źródłowym [1], [2] itp. odnoszącym się do dostarczonych źródeł internetowych.\n\
+            2. NIE CENZURUJ ani nie usuwaj nazwisk osób publicznych, autorów, polityków, badaczy, urzędników i sygnalistów (np. Klaus Schwab, Rob Brotherton, Edward Snowden, autorzy ustaw i raportów). Wymieniaj ich z nazwiska i roli. Zasada prywatności dotyczy tylko osób prywatnych i wrażliwych danych PII (PESEL, adresy domowe).\n\
+            3. Oddzielaj twarde fakty i dowody źródłowe od narracji, domniemań i spekulacji.\n\
+            4. Na końcu odpowiedzi umieść czytelną sekcję '### Źródła' z ponumerowaną listą linków URL.\n\
+            5. Odpowiadaj wyczerpująco, profesjonalnie, neutralnie i w języku polskim.";
+
+            let prompt = format!("Pytanie / temat użytkownika: {message}{context_block}");
 
             if let Ok(answer) = client.complete_text(system, &prompt).await {
                 return Ok(ChatResponse {
@@ -386,19 +472,40 @@ impl Service {
                     guard_refused: false,
                     ingest: None,
                     matching_claims: matching,
+                    sources: live_sources,
+                    auto_researched: true,
+                    new_claims_count: new_claims_added,
                 });
             }
         }
 
-        // 5. Fallback jeśli LLM offline lub brak
-        let content = if !matching.is_empty() {
-            format!(
-                "Oto twierdzenia z lokalnego rejestru BALD powiązane z Twoim pytaniem ({}) :\n\n{}",
+        // 7. Fallback jeśli LLM offline lub brak odpowiedzi
+        let mut content = String::new();
+        if !live_sources.is_empty() {
+            content.push_str(&format!(
+                "Wyniki zbadania sieci na żywo dla zapytania **{}**:\n\n",
+                message
+            ));
+            for (i, s) in live_sources.iter().enumerate() {
+                content.push_str(&format!(
+                    "[{}] **{}** (`{}`)\n{}\n🔗 {}\n\n",
+                    i + 1,
+                    s.title,
+                    s.domain,
+                    s.snippet,
+                    s.url
+                ));
+            }
+        }
+
+        if !matching.is_empty() {
+            content.push_str(&format!(
+                "\nZweryfikowane twierdzenia w Rejestrze BALD ({}):\n\n{}",
                 matching.len(),
                 matching
                     .iter()
                     .map(|c| format!(
-                        "• **{}** (rodzaj: `{}`)\n  *Liczba źródeł: {}, cytatów: {}*",
+                        "• **{}** (rodzaj: `{}`)\n  *Źródeł: {}, cytatów: {}*",
                         c.text,
                         c.kind.as_str(),
                         c.document_count,
@@ -406,10 +513,12 @@ impl Service {
                     ))
                     .collect::<Vec<_>>()
                     .join("\n\n")
-            )
-        } else {
-            "W lokalnej bazie BALD nie ma jeszcze zarejestrowanych twierdzeń na ten temat.\n\n**Możesz wkleić dowolny link (URL) do artykułu lub dokumentu tutaj w czacie** — pobiorę go bezpiecznie, wyekstrahuję twierdzenia i sprawdzę ich pokrycie w cytatach źródłowych.".to_string()
-        };
+            ));
+        }
+
+        if content.is_empty() {
+            content = "Nie znaleziono jeszcze wystarczających informacji na ten temat w sieci ani w lokalnej bazie. Możesz wkleić bezpośredni link (URL) do artykułu lub dokumentu, a zbadam go pod kątem twierdzeń i cytatów.".to_string();
+        }
 
         Ok(ChatResponse {
             role: "assistant".to_string(),
@@ -418,6 +527,9 @@ impl Service {
             guard_refused: false,
             ingest: None,
             matching_claims: matching,
+            sources: live_sources,
+            auto_researched: true,
+            new_claims_count: new_claims_added,
         })
     }
 
@@ -647,6 +759,11 @@ impl Service {
 fn build_search_providers(cfg: &Config) -> Vec<Arc<dyn Provider>> {
     let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
 
+    // 1. Live Web Search (DuckDuckGo HTML crawler) - bezkluczowy, wolny od cenzury silnik przeszukiwania otwartej sieci
+    if let Ok(ddg) = DuckDuckGoProvider::new() {
+        providers.push(Arc::new(ddg));
+    }
+
     if cfg.providers.searxng.enabled {
         if let Ok(provider) = SearxngProvider::new(
             cfg.searxng_base_url(),
@@ -842,6 +959,7 @@ mod tests {
         let db_path = dir.join("bald.db");
         let mut config = Config::default();
         config.storage.path = db_path.to_string_lossy().to_string();
+        config.llm.provider = "disabled".to_string();
         config.save_to(&config_path).expect("save config");
         (dir, config_path)
     }

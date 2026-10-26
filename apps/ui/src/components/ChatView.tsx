@@ -103,6 +103,9 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
           guardRefused: response.guard_refused,
           ingest: response.ingest,
           matchingClaims: response.matching_claims,
+          sources: response.sources,
+          autoResearched: response.auto_researched,
+          newClaimsCount: response.new_claims_count,
           createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
 
@@ -344,6 +347,49 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
                       <div className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300">
                         <ShieldCheck className="h-3.5 w-3.5" />
                         {t('chat.guardNotice')}
+                      </div>
+                    )}
+
+                    {/* Perplexity-style Live Research Sources Shelf */}
+                    {msg.sources && msg.sources.length > 0 && (
+                      <div className="mb-3.5 space-y-2 border-b border-white/[0.06] pb-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-cyan-300">
+                            <Globe className="h-3.5 w-3.5 text-cyan-400" />
+                            <span>Zbadano na żywo w sieci ({msg.sources.length} źródeł)</span>
+                          </div>
+                          {msg.newClaimsCount && msg.newClaimsCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-300/90">
+                              <Sparkles className="h-3 w-3" />
+                              +{msg.newClaimsCount} twierdzeń w Ledgerze
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
+                          {msg.sources.map((src, sIdx) => (
+                            <a
+                              key={sIdx}
+                              href={src.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="group flex flex-col justify-between rounded-xl border border-white/[0.08] bg-white/[0.025] p-2.5 transition hover:border-cyan-400/30 hover:bg-white/[0.05]"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-cyan-400/15 text-[10px] font-bold text-cyan-300">
+                                  {sIdx + 1}
+                                </span>
+                                <span className="truncate text-[10px] font-medium text-slate-400 group-hover:text-cyan-300">
+                                  {src.domain}
+                                </span>
+                                <ExternalLink className="ml-auto h-2.5 w-2.5 shrink-0 text-slate-500 group-hover:text-cyan-300" />
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-[11px] font-semibold text-slate-200 group-hover:text-white">
+                                {src.title}
+                              </p>
+                            </a>
+                          ))}
+                        </div>
                       </div>
                     )}
 
