@@ -9,9 +9,11 @@ import type {
   IngestResponse,
   NewResearchBot,
   ResearchBot,
+  ScoutReport,
   SearchWebResponse,
   SettingsUpdate,
   SettingsView,
+  TrialActionResponse,
 } from './types';
 
 declare global {
@@ -212,5 +214,43 @@ export async function fetchBotRuns(id: string): Promise<BotRunRecord[]> {
     return invoke<BotRunRecord[]>('bot_runs_list', { id, limit: 50 });
   }
   return request<BotRunRecord[]>(`/api/bots/${encodeURIComponent(id)}/runs`);
+}
+
+export async function fetchScoutReport(): Promise<ScoutReport> {
+  if (isTauriRuntime()) {
+    return invoke<ScoutReport>('scout_get');
+  }
+  return request<ScoutReport>('/api/models/scout');
+}
+
+export async function checkScoutModels(): Promise<ScoutReport> {
+  if (isTauriRuntime()) {
+    return invoke<ScoutReport>('scout_check');
+  }
+  return request<ScoutReport>('/api/models/scout/check', { method: 'POST' });
+}
+
+export async function startTrialModel(modelId: string): Promise<TrialActionResponse> {
+  if (isTauriRuntime()) {
+    return invoke<TrialActionResponse>('trial_start', { payload: { model_id: modelId } });
+  }
+  return request<TrialActionResponse>('/api/models/trial/start', {
+    method: 'POST',
+    body: JSON.stringify({ model_id: modelId }),
+  });
+}
+
+export async function commitTrialModel(): Promise<TrialActionResponse> {
+  if (isTauriRuntime()) {
+    return invoke<TrialActionResponse>('trial_commit');
+  }
+  return request<TrialActionResponse>('/api/models/trial/commit', { method: 'POST' });
+}
+
+export async function rollbackTrialModel(): Promise<TrialActionResponse> {
+  if (isTauriRuntime()) {
+    return invoke<TrialActionResponse>('trial_rollback');
+  }
+  return request<TrialActionResponse>('/api/models/trial/rollback', { method: 'POST' });
 }
 

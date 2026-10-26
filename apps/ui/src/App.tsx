@@ -5,6 +5,7 @@ import { ChatView } from './components/ChatView';
 import { ClaimDrawer } from './components/ClaimDrawer';
 import { ClaimsView } from './components/ClaimsView';
 import { Header, type Screen } from './components/Header';
+import { HelpModal } from './components/HelpModal';
 import { SettingsView } from './components/SettingsView';
 import { StatsBar } from './components/StatsBar';
 import type { ClaimSummary, LedgerStats } from './types';
@@ -23,6 +24,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ClaimSummary | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -56,12 +58,13 @@ export default function App() {
         aria-hidden="true"
       />
 
-      <Header screen={screen} onNavigate={navigate} />
+      <Header screen={screen} onNavigate={navigate} onOpenHelp={() => setIsHelpOpen(true)} />
 
       <main className="relative mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
         {screen === 'chat' ? (
           <ChatView
             onOpenClaim={setSelected}
+            onOpenHelp={() => setIsHelpOpen(true)}
             onSwitchToLedger={() => {
               void refresh();
               navigate('claims');
@@ -91,6 +94,7 @@ export default function App() {
       </main>
 
       {selected && <ClaimDrawer summary={selected} onClose={() => setSelected(null)} />}
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }

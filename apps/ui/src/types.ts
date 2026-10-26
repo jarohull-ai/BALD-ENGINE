@@ -117,12 +117,22 @@ export interface LlmSettingsView {
   maxAttempts: number;
 }
 
+export interface ScoutSettingsView {
+  enabled: boolean;
+  intervalDays: number;
+  lastRun: string | null;
+  inTrial: boolean;
+  trialModel: string | null;
+  previousModel: string | null;
+}
+
 export interface SettingsView {
   configPath: string;
   language: string;
   searxng: SearxngSettings;
   brave: BraveSettings;
   llm: LlmSettingsView;
+  scout: ScoutSettingsView;
   envOverrides: string[];
 }
 
@@ -156,6 +166,8 @@ export interface SettingsUpdate {
   maxInputChars?: number;
   maxClaims?: number;
   maxAttempts?: number;
+  scoutEnabled?: boolean;
+  scoutIntervalDays?: number;
 }
 
 export interface DiscoveredEngine {
@@ -207,6 +219,64 @@ export interface IngestResponse {
   generated_at: string;
 }
 
+export interface CredibilityScore {
+  score: number;
+  tier: string;
+  tier_label: string;
+  badge: string;
+  badge_color: string;
+  domain_authority: number;
+  factual_density: number;
+  corroboration_count: number;
+  reason: string;
+  factors: string[];
+}
+
+export interface AnswerCredibility {
+  overall_score: number;
+  verdict: string;
+  verdict_detail: string;
+  badge_color: string;
+  sources_evaluated: number;
+  primary_sources_count: number;
+  corroboration_level: string;
+  key_strengths: string[];
+}
+
+export interface CandidateModel {
+  id: string;
+  name: string;
+  architecture: string;
+  param_size: string;
+  size_mb: number;
+  quality_score: number;
+  release_date: string;
+  highlights: string[];
+  summary: string;
+  installed: boolean;
+  is_current: boolean;
+  is_trial: boolean;
+}
+
+export interface ScoutReport {
+  enabled: boolean;
+  interval_days: number;
+  last_checked: string;
+  in_trial: boolean;
+  active_model: string;
+  trial_model: string | null;
+  previous_model: string | null;
+  candidates: CandidateModel[];
+  new_models_count: number;
+}
+
+export interface TrialActionResponse {
+  success: boolean;
+  in_trial: boolean;
+  current_model: string;
+  message: string;
+}
+
 export interface ChatSource {
   title: string;
   url: string;
@@ -227,6 +297,10 @@ export interface ChatMessageItem {
   autoResearched?: boolean;
   newClaimsCount?: number;
   followUps?: string[];
+  credibility?: AnswerCredibility;
+  inTrial?: boolean;
+  trialModel?: string | null;
+  previousModel?: string | null;
   createdAt: string;
 }
 
@@ -246,6 +320,10 @@ export interface ChatResponse {
   auto_researched?: boolean;
   new_claims_count?: number;
   follow_ups?: string[];
+  credibility?: AnswerCredibility;
+  in_trial?: boolean;
+  trial_model?: string | null;
+  previous_model?: string | null;
 }
 
 export interface SearchHit {
@@ -256,6 +334,7 @@ export interface SearchHit {
   score: number;
   providers: string[];
   published?: string;
+  credibility?: CredibilityScore;
 }
 
 export interface SearchWebResponse {

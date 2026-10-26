@@ -4,12 +4,16 @@
 //! serwer z tokenem sesji, a `apps/desktop` mapuje te same metody na komendy
 //! Tauri. Dzięki temu UI ma jeden kontrakt danych w obu trybach.
 
+pub mod credibility;
 pub mod discovery;
 mod server;
+pub mod scout;
 mod service;
 mod settings;
 
+pub use credibility::{AnswerCredibility, CredibilityScore};
 pub use discovery::{discover_local_engines, DiscoveredEngine, DiscoveryResponse};
+pub use scout::{CandidateModel, ScoutReport, StartTrialRequest, TrialActionResponse};
 pub use server::{serve, ServeOptions};
 pub use service::{
     extract_url, AcceptedClaimInfo, ChatMessage, ChatRequest, ChatResponse, ClaimsResponse,

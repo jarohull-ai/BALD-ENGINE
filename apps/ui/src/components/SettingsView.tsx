@@ -22,11 +22,29 @@ import {
   Sparkles,
   Trash2,
   Wifi,
+  Search,
+  Compass,
 } from 'lucide-react';
-import { discoverModels, downloadEmbeddedModel, fetchEmbeddedModels, fetchSettings, saveSettings } from '../api';
+import {
+  checkScoutModels,
+  discoverModels,
+  downloadEmbeddedModel,
+  fetchEmbeddedModels,
+  fetchScoutReport,
+  fetchSettings,
+  saveSettings,
+  startTrialModel,
+} from '../api';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
-import type { DiscoveredEngine, EmbeddedModelStatusItem, SettingsUpdate, SettingsView } from '../types';
+import type {
+  DiscoveredEngine,
+  EmbeddedModelStatusItem,
+  ScoutReport,
+  SettingsUpdate,
+  SettingsView,
+} from '../types';
+import { InfoTooltip } from './InfoTooltip';
 import {
   Badge,
   CardShell,
@@ -62,6 +80,8 @@ interface Draft {
   maxInputChars: number;
   temperature: number;
   maxTokens: number;
+  scoutEnabled: boolean;
+  scoutIntervalDays: number;
 }
 
 interface Secrets {
@@ -103,6 +123,8 @@ function buildDraft(view: SettingsView): Draft {
     maxInputChars: view.llm.maxInputChars,
     temperature: view.llm.temperature,
     maxTokens: view.llm.maxTokens,
+    scoutEnabled: view.scout?.enabled ?? true,
+    scoutIntervalDays: view.scout?.intervalDays ?? 7,
   };
 }
 
@@ -136,6 +158,8 @@ function toUpdate(draft: Draft, secrets: Secrets, clears: Clears): SettingsUpdat
     maxTokens: draft.maxTokens,
     maxInputChars: draft.maxInputChars,
     maxClaims: draft.maxClaims,
+    scoutEnabled: draft.scoutEnabled,
+    scoutIntervalDays: draft.scoutIntervalDays,
   };
 }
 
@@ -322,6 +346,56 @@ export function SettingsView() {
   const [embeddedModels, setEmbeddedModels] = useState<EmbeddedModelStatusItem[]>([]);
   const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [scoutReport, setScoutReport] = useState<ScoutReport | null>(null);
+  const [checkingScout, setCheckingScout] = useState(false);
+  const [trialStartingId, setTrialStartingId] = useState<string | null>(null);
+  const [scoutNotice, setScoutNotice] = useState<string | null>(null);
+
+  const loadScout = useCallback(async () => {
+    try {
+      const rep = await fetchScoutReport();
+      setScoutReport(rep);
+    } catch {
+      setScoutReport(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadScout();
+  }, [loadScout]);
+
+  const handleCheckScout = async () => {
+    setCheckingScout(true);
+    setScoutNotice(null);
+    try {
+      const rep = await checkScoutModels();
+      setScoutReport(rep);
+      setScoutNotice(`Szperacz zakończył skanowanie. Liczba dostępnych modeli: ${rep.candidates.length}`);
+      window.setTimeout(() => setScoutNotice(null), 4000);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCheckingScout(false);
+    }
+  };
+
+  const handleStartTrial = async (modelId: string) => {
+    setTrialStartingId(modelId);
+    setScoutNotice(null);
+    try {
+      const res = await startTrialModel(modelId);
+      setScoutNotice(res.message);
+      await loadScout();
+      await loadEmbedded();
+      update('llmProvider', 'embedded');
+      update('embeddedModel', modelId);
+      window.setTimeout(() => setScoutNotice(null), 4000);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTrialStartingId(null);
+    }
+  };
 
   const loadEmbedded = useCallback(async () => {
     try {
@@ -869,6 +943,197 @@ export function SettingsView() {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Szperacz Modeli AI (Scout Bot) & Piaskownica A/B (Jazda Próbna) */}
+        <div className="mt-6 rounded-2xl border border-amber-400/25 bg-amber-400/[0.04] p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-xl border border-amber-400/30 bg-amber-400/15 text-amber-300">
+                <Compass className="h-4 w-4" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">
+                    {t('settings.scoutTitle')}
+                  </h3>
+                  <InfoTooltip
+                    title="Autonomiczny Szperacz Modeli AI"
+                    content="Cykliczny bot sprawdzający repozytoria (Hugging Face) pod kątem nowszych, zoptymalizowanych modeli <3B z wysoką kulturą polszczyzny i niskim zużyciem RAM."
+                  />
+                  {scoutReport?.in_trial && (
+                    <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[9px] font-bold text-amber-300 border border-amber-500/30">
+                      Tryb Jazdy Próbnej aktywny
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {t('settings.scoutSubtitle')}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCheckScout()}
+                disabled={checkingScout}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50"
+              >
+                {checkingScout ? (
+                  <>
+                    <Spinner />
+                    <span>{t('settings.scoutChecking')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-3.5 w-3.5" />
+                    <span>{t('settings.scoutCheckNow')}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Scout settings bar: periodic scan interval */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/[0.08] bg-black/30 p-3 text-xs">
+            <div className="flex items-center gap-3">
+              <Toggle
+                label={t('settings.scoutEnabled')}
+                checked={draft.scoutEnabled}
+                onChange={(val) => update('scoutEnabled', val)}
+              />
+              <InfoTooltip
+                content="Gdy ta opcja jest włączona, BALD w tle cyklicznie sprawdza czy pojawił się nowy, certyfikowany model o wyższych parametrach."
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400">{t('settings.scoutInterval')}:</span>
+              <select
+                value={draft.scoutIntervalDays}
+                onChange={(e) => update('scoutIntervalDays', Number(e.target.value))}
+                className="rounded-lg border border-white/10 bg-neutral-900 px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+              >
+                <option value={7}>Co 7 dni (Zalecane)</option>
+                <option value={14}>Co 14 dni</option>
+                <option value={30}>Co 30 dni</option>
+              </select>
+            </div>
+          </div>
+
+          {scoutNotice && (
+            <div className="mt-3 rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-2.5 text-xs text-emerald-300 flex items-center gap-2">
+              <Check className="h-3.5 w-3.5" />
+              <span>{scoutNotice}</span>
+            </div>
+          )}
+
+          {/* Candidates list */}
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-slate-300">
+                {t('settings.scoutCandidatesTitle')}
+              </h4>
+              {scoutReport?.last_checked && (
+                <span className="text-[10px] text-slate-500">
+                  Ostatnie skanowanie: {scoutReport.last_checked}
+                </span>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(scoutReport?.candidates ?? []).map((cand) => {
+                const isCurrent = cand.is_current;
+                const isTrial = cand.is_trial;
+                const isStarting = trialStartingId === cand.id;
+
+                return (
+                  <div
+                    key={cand.id}
+                    className={cn(
+                      'relative rounded-xl border p-4 transition flex flex-col justify-between',
+                      isTrial
+                        ? 'border-amber-400/50 bg-amber-400/[0.08] shadow-sm'
+                        : isCurrent
+                        ? 'border-emerald-400/40 bg-emerald-400/[0.04]'
+                        : 'border-white/[0.08] bg-black/20 hover:border-white/15',
+                    )}
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-semibold text-slate-100">{cand.name}</span>
+                            <span className="rounded bg-amber-400/15 border border-amber-400/30 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">
+                              {cand.param_size}
+                            </span>
+                            <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] text-slate-400">
+                              ~{cand.size_mb} MB
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-500">{cand.architecture}</span>
+                        </div>
+                        <span className="rounded-full bg-emerald-500/15 border border-emerald-500/25 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                          {cand.quality_score}/100 pkt
+                        </span>
+                      </div>
+
+                      <p className="mt-2 text-[11px] leading-relaxed text-slate-400">{cand.summary}</p>
+
+                      <div className="mt-2.5 flex flex-wrap gap-1">
+                        {cand.highlights.map((h, hIdx) => (
+                          <span
+                            key={hIdx}
+                            className="rounded bg-white/[0.03] border border-white/5 px-2 py-0.5 text-[9px] text-slate-300"
+                          >
+                            ✓ {h}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-2.5">
+                      <span className="font-mono text-[9px] text-slate-500">
+                        {cand.installed ? 'Pobrany lokalnie' : 'Dostępny online'}
+                      </span>
+
+                      {isTrial ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-200">
+                          <Sparkles className="h-3 w-3 text-amber-400" />
+                          Trwa jazda próbna w czacie
+                        </span>
+                      ) : isCurrent ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/30 bg-emerald-400/15 px-3 py-1 text-xs font-semibold text-emerald-200">
+                          <Check className="h-3 w-3 text-emerald-400" />
+                          Model domyślny
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleStartTrial(cand.id)}
+                          disabled={Boolean(trialStartingId)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/25 disabled:opacity-50"
+                        >
+                          {isStarting ? (
+                            <>
+                              <Spinner />
+                              <span>{t('settings.trialStarting')}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3 w-3" />
+                              <span>{t('settings.trialStart')}</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 

@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowUp,
   Bot,
+  CheckCircle2,
   Compass,
   Download,
   ExternalLink,
@@ -11,20 +12,24 @@ import {
   MessageSquare,
   Quote,
   RotateCcw,
+  Save,
+  Scale,
   Search,
   ShieldCheck,
   Sparkles,
   User,
 } from 'lucide-react';
-import { ingestEvidence, searchWeb, sendChatMessage } from '../api';
+import { commitTrialModel, ingestEvidence, rollbackTrialModel, searchWeb, sendChatMessage } from '../api';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
 import type { ChatMessageItem, ClaimSummary, IngestResponse, SearchHit } from '../types';
+import { InfoTooltip } from './InfoTooltip';
 import { Badge, CardShell } from './ui';
 
 interface ChatViewProps {
   onOpenClaim?: (claim: ClaimSummary) => void;
   onSwitchToLedger?: () => void;
+  onOpenHelp?: () => void;
 }
 
 const STORAGE_KEY = 'bald.chat.history.v1';
@@ -39,13 +44,14 @@ function loadStoredMessages(): ChatMessageItem[] {
   }
 }
 
-export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
+export function ChatView({ onOpenClaim, onSwitchToLedger, onOpenHelp }: ChatViewProps) {
   const { t } = useI18n();
   const [mode, setMode] = useState<'chat' | 'search'>('chat');
   const [messages, setMessages] = useState<ChatMessageItem[]>(loadStoredMessages);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [trialNotice, setTrialNotice] = useState<string | null>(null);
 
   // Web search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,6 +77,12 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
     async (textToSend?: string) => {
       const messageText = (textToSend ?? input).trim();
       if (!messageText || sending) return;
+
+      if (messageText.toLowerCase() === '/help' || messageText.toLowerCase() === '/pomoc') {
+        onOpenHelp?.();
+        setInput('');
+        return;
+      }
 
       const userMessage: ChatMessageItem = {
         id: `u-${Date.now()}`,
@@ -107,6 +119,10 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
           autoResearched: response.auto_researched,
           newClaimsCount: response.new_claims_count,
           followUps: response.follow_ups,
+          credibility: response.credibility,
+          inTrial: response.in_trial,
+          trialModel: response.trial_model,
+          previousModel: response.previous_model,
           createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
 
@@ -120,8 +136,32 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
         }, 100);
       }
     },
-    [input, messages, sending],
+    [input, messages, sending, onOpenHelp],
   );
+
+  const handleCommitTrial = async (msgId: string) => {
+    try {
+      const res = await commitTrialModel();
+      setTrialNotice(res.message);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === msgId ? { ...m, inTrial: false } : m))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleRollbackTrial = async (msgId: string) => {
+    try {
+      const res = await rollbackTrialModel();
+      setTrialNotice(res.message);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === msgId ? { ...m, inTrial: false } : m))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const handleSearchWeb = useCallback(
     async (queryOverride?: string) => {
@@ -289,6 +329,22 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
           )}
         </div>
       </div>
+
+      {trialNotice && (
+        <div className="flex items-center justify-between rounded-xl border border-emerald-400/30 bg-emerald-950/40 px-4 py-2.5 text-xs text-emerald-300 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>{trialNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setTrialNotice(null)}
+            className="text-emerald-400/70 hover:text-emerald-200 text-xs px-1.5 py-0.5 rounded hover:bg-white/5"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* MODE 1: CHAT & INVESTIGATE */}
       {mode === 'chat' && (
@@ -531,6 +587,96 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
                       </div>
                     )}
 
+                    {/* Sędzia Wiarygodności (Evidence & Credibility Judge) */}
+                    {msg.credibility && (
+                      <div className="mt-3.5 rounded-xl border border-white/[0.08] bg-black/40 p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] pb-2">
+                          <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+                            <Scale
+                              className={cn(
+                                'h-4 w-4',
+                                msg.credibility.overall_score >= 80
+                                  ? 'text-emerald-400'
+                                  : msg.credibility.overall_score >= 55
+                                  ? 'text-amber-400'
+                                  : 'text-rose-400',
+                              )}
+                            />
+                            <span>Sędzia Wiarygodności BALD</span>
+                            <span
+                              className={cn(
+                                'rounded-md px-2 py-0.5 text-[10px] font-bold',
+                                msg.credibility.overall_score >= 80
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : msg.credibility.overall_score >= 55
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
+                              )}
+                            >
+                              {msg.credibility.overall_score}% — {msg.credibility.verdict}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                            <span>{msg.credibility.corroboration_level}</span>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-slate-300 leading-relaxed">
+                          {msg.credibility.verdict_detail}
+                        </p>
+                        {msg.credibility.key_strengths && msg.credibility.key_strengths.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {msg.credibility.key_strengths.map((str, kIdx) => (
+                              <span
+                                key={kIdx}
+                                className="rounded bg-white/[0.05] border border-white/10 px-2 py-0.5 text-[10px] text-slate-300 flex items-center gap-1"
+                              >
+                                <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
+                                {str}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Trial Sandbox A/B Mode Banner & Action Buttons */}
+                    {msg.inTrial && (
+                      <div className="mt-3.5 rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+                            <Sparkles className="h-4 w-4 text-amber-400" />
+                            <span>Tryb Jazdy Próbnej: Odpowiedź wygenerowana przez model</span>
+                            {msg.trialModel && (
+                              <span className="font-mono text-[11px] bg-amber-400/20 text-amber-200 px-2 py-0.5 rounded border border-amber-400/30">
+                                {msg.trialModel}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-slate-300">
+                          Jak oceniasz jakość i styl tej odpowiedzi? Możesz zachować ten model na stałe jako domyślny lub natychmiast wrócić do poprzedniego.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleCommitTrial(msg.id)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 px-3 py-1.5 text-xs font-medium text-emerald-300 transition"
+                          >
+                            <Save className="h-3.5 w-3.5" />
+                            Zachowaj ten model jako domyślny
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRollbackTrial(msg.id)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-300 transition"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Przywróć poprzedni model ({msg.previousModel || 'bazowy'})
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mt-2 text-right text-[9px] text-slate-500">{msg.createdAt}</div>
                   </div>
 
@@ -659,13 +805,43 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-mono text-[10px] text-cyan-400">
                               {hit.domain}
                             </span>
                             <span className="text-[9px] text-slate-600">
                               {hit.providers.join(', ')}
                             </span>
+                            {hit.credibility && (
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold',
+                                    hit.credibility.score >= 80
+                                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25'
+                                      : hit.credibility.score >= 55
+                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
+                                      : 'bg-rose-500/15 text-rose-300 border border-rose-500/25',
+                                  )}
+                                >
+                                  <Scale className="h-2.5 w-2.5" />
+                                  {hit.credibility.score}% ({hit.credibility.tier})
+                                </span>
+                                <InfoTooltip
+                                  title={`Wiarygodność: ${hit.credibility.tier_label}`}
+                                  content={
+                                    <div className="space-y-1">
+                                      <p>{hit.credibility.reason}</p>
+                                      <div className="pt-1 text-[10px] text-neutral-400 space-y-0.5">
+                                        <div>Autorytet domeny: {hit.credibility.domain_authority}%</div>
+                                        <div>Gęstość faktograficzna: {hit.credibility.factual_density}%</div>
+                                        <div>Korelacja źródeł: {hit.credibility.corroboration_count} powiązań</div>
+                                      </div>
+                                    </div>
+                                  }
+                                />
+                              </div>
+                            )}
                           </div>
                           <h3 className="mt-1 font-semibold text-slate-100">{hit.title}</h3>
                           <p className="mt-1 text-xs leading-relaxed text-slate-400">

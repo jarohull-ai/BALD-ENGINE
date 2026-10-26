@@ -1,4 +1,4 @@
-import { Bot, Languages, MessageSquareText, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
+import { Bot, HelpCircle, Languages, MessageSquareText, Settings2, ShieldCheck, Sparkles } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
 
@@ -7,9 +7,11 @@ export type Screen = 'chat' | 'claims' | 'bots' | 'settings';
 export function Header({
   screen,
   onNavigate,
+  onOpenHelp,
 }: {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
+  onOpenHelp?: () => void;
 }) {
   const { lang, setLang, t } = useI18n();
 
@@ -107,6 +109,17 @@ export function Header({
             {t('shell.phase')}
           </span>
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenHelp}
+          aria-label="Pomoc & Skróty (/help)"
+          title="Pomoc & Skróty (/help)"
+          className="flex items-center gap-1.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] font-semibold text-amber-300 transition hover:bg-amber-500/20"
+        >
+          <HelpCircle className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Pomoc</span>
+        </button>
 
         <button
           type="button"

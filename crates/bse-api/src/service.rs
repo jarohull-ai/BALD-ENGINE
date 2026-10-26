@@ -133,6 +133,14 @@ pub struct ChatResponse {
     pub new_claims_count: usize,
     #[serde(default)]
     pub follow_ups: Vec<String>,
+    #[serde(default)]
+    pub credibility: Option<crate::credibility::AnswerCredibility>,
+    #[serde(default)]
+    pub in_trial: bool,
+    #[serde(default)]
+    pub trial_model: Option<String>,
+    #[serde(default)]
+    pub previous_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +153,8 @@ pub struct SearchHit {
     pub providers: Vec<String>,
     #[serde(default)]
     pub published: Option<String>,
+    #[serde(default)]
+    pub credibility: Option<crate::credibility::CredibilityScore>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +305,157 @@ impl Service {
         Ok(true)
     }
 
+    pub async fn start_trial(
+        &self,
+        model_id: &str,
+    ) -> Result<crate::scout::TrialActionResponse, ServiceError> {
+        let model_id = model_id.trim();
+        let preset = bse_llm::ModelCatalog::find(model_id).ok_or_else(|| {
+            ServiceError::NotFound(format!("Nie znaleziono modelu {model_id}"))
+        })?;
+
+        let storage = bse_llm::ModelStorage::default();
+        if !storage.is_installed(&preset) {
+            storage
+                .download(&preset, |_d, _t| {})
+                .await
+                .map_err(|e| ServiceError::Internal(format!("Błąd pobierania modelu: {e}")))?;
+        }
+
+        let mut next = {
+            let current = self.config.read().map_err(|_| ServiceError::Lock)?;
+            current.clone()
+        };
+
+        let previous_model = if next.scout.in_trial {
+            next.scout.previous_model.clone()
+        } else {
+            Some(next.llm.embedded_model.clone())
+        };
+
+        next.scout.in_trial = true;
+        next.scout.trial_model = Some(model_id.to_string());
+        next.scout.previous_model = previous_model;
+        next.llm.provider = "embedded".to_string();
+        next.llm.embedded_model = model_id.to_string();
+
+        next.save_to(&self.config_path)?;
+        {
+            let mut current = self.config.write().map_err(|_| ServiceError::Lock)?;
+            *current = next;
+        }
+
+        Ok(crate::scout::TrialActionResponse {
+            success: true,
+            in_trial: true,
+            current_model: model_id.to_string(),
+            message: format!(
+                "Rozpoczęto jazdę próbną modelu {}. Przetestuj jego odpowiedzi w czacie!",
+                preset.name
+            ),
+        })
+    }
+
+    pub fn commit_trial(&self) -> Result<crate::scout::TrialActionResponse, ServiceError> {
+        let mut next = {
+            let current = self.config.read().map_err(|_| ServiceError::Lock)?;
+            current.clone()
+        };
+
+        if !next.scout.in_trial {
+            return Ok(crate::scout::TrialActionResponse {
+                success: false,
+                in_trial: false,
+                current_model: next.llm.embedded_model.clone(),
+                message: "Brak aktywnej jazdy próbnej.".to_string(),
+            });
+        }
+
+        let chosen = next
+            .scout
+            .trial_model
+            .clone()
+            .unwrap_or_else(|| next.llm.embedded_model.clone());
+
+        next.llm.provider = "embedded".to_string();
+        next.llm.embedded_model = chosen.clone();
+        next.scout.in_trial = false;
+        next.scout.trial_model = None;
+        next.scout.previous_model = None;
+
+        next.save_to(&self.config_path)?;
+        {
+            let mut current = self.config.write().map_err(|_| ServiceError::Lock)?;
+            *current = next;
+        }
+
+        Ok(crate::scout::TrialActionResponse {
+            success: true,
+            in_trial: false,
+            current_model: chosen.clone(),
+            message: format!("Model {chosen} został pomyślnie zapisany jako Twój domyślny model AI!"),
+        })
+    }
+
+    pub fn rollback_trial(&self) -> Result<crate::scout::TrialActionResponse, ServiceError> {
+        let mut next = {
+            let current = self.config.read().map_err(|_| ServiceError::Lock)?;
+            current.clone()
+        };
+
+        if !next.scout.in_trial {
+            return Ok(crate::scout::TrialActionResponse {
+                success: false,
+                in_trial: false,
+                current_model: next.llm.embedded_model.clone(),
+                message: "Brak aktywnej jazdy próbnej do wycofania.".to_string(),
+            });
+        }
+
+        let fallback = next
+            .scout
+            .previous_model
+            .clone()
+            .unwrap_or_else(|| "qwen2.5-0.5b-instruct".to_string());
+
+        next.llm.embedded_model = fallback.clone();
+        next.scout.in_trial = false;
+        next.scout.trial_model = None;
+        next.scout.previous_model = None;
+
+        next.save_to(&self.config_path)?;
+        {
+            let mut current = self.config.write().map_err(|_| ServiceError::Lock)?;
+            *current = next;
+        }
+
+        Ok(crate::scout::TrialActionResponse {
+            success: true,
+            in_trial: false,
+            current_model: fallback.clone(),
+            message: format!("Pomyślnie przywrócono poprzedni model ({fallback})."),
+        })
+    }
+
+    pub async fn scout_report(&self) -> Result<crate::scout::ScoutReport, ServiceError> {
+        let config = self.effective_config()?;
+        Ok(crate::scout::get_scout_report(&config).await)
+    }
+
+    pub async fn scout_check(&self) -> Result<crate::scout::ScoutReport, ServiceError> {
+        let mut next = {
+            let current = self.config.read().map_err(|_| ServiceError::Lock)?;
+            current.clone()
+        };
+        next.scout.last_run = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M").to_string());
+        let _ = next.save_to(&self.config_path);
+        {
+            let mut current = self.config.write().map_err(|_| ServiceError::Lock)?;
+            *current = next.clone();
+        }
+        Ok(crate::scout::get_scout_report(&next).await)
+    }
+
     /// Bezpieczna analiza i dodanie źródła do lokalnego Evidence Ledgera.
     pub async fn ingest(&self, raw_url: &str) -> Result<IngestResponse, ServiceError> {
         self.ingest_internal(raw_url, false).await
@@ -368,6 +529,11 @@ impl Service {
 
     /// Asystent czatu BALD dla laików: obsługa URL, pytań o tematy i person-guarda.
     pub async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, ServiceError> {
+        let effective_config = self.effective_config().unwrap_or_default();
+        let in_trial = effective_config.scout.in_trial;
+        let trial_model = effective_config.scout.trial_model.clone();
+        let previous_model = effective_config.scout.previous_model.clone();
+
         let message = req.message.trim();
         if message.is_empty() {
             return Ok(ChatResponse {
@@ -383,6 +549,10 @@ impl Service {
                 auto_researched: false,
                 new_claims_count: 0,
                 follow_ups: Vec::new(),
+                credibility: None,
+                in_trial,
+                trial_model,
+                previous_model,
             });
         }
 
@@ -399,6 +569,17 @@ impl Service {
                         ingest_resp.claims_rejected,
                     );
                     let count = ingest_resp.claims_accepted;
+                    let credibility = Some(crate::credibility::evaluate_answer(
+                        &text,
+                        &[ChatSource {
+                            title: ingest_resp.title.clone(),
+                            url: ingest_resp.url.clone(),
+                            domain: ingest_resp.domain.clone(),
+                            snippet: text.clone(),
+                            published: None,
+                        }],
+                        &[],
+                    ));
                     return Ok(ChatResponse {
                         role: "assistant".to_string(),
                         content: text,
@@ -410,6 +591,10 @@ impl Service {
                         auto_researched: false,
                         new_claims_count: count,
                         follow_ups: Vec::new(),
+                        credibility,
+                        in_trial,
+                        trial_model,
+                        previous_model,
                     });
                 }
                 Err(err) => {
@@ -424,6 +609,10 @@ impl Service {
                         auto_researched: false,
                         new_claims_count: 0,
                         follow_ups: Vec::new(),
+                        credibility: None,
+                        in_trial,
+                        trial_model,
+                        previous_model,
                     });
                 }
             }
@@ -449,6 +638,10 @@ impl Service {
                 auto_researched: false,
                 new_claims_count: 0,
                 follow_ups: Vec::new(),
+                credibility: None,
+                in_trial,
+                trial_model,
+                previous_model,
             });
         }
 
@@ -580,6 +773,11 @@ impl Service {
 
             if let Ok(answer) = client.complete_text(system, &prompt).await {
                 let follow_ups = extract_follow_ups(&answer, message);
+                let credibility = Some(crate::credibility::evaluate_answer(
+                    &answer,
+                    &live_sources,
+                    &matching,
+                ));
                 return Ok(ChatResponse {
                     role: "assistant".to_string(),
                     content: answer,
@@ -591,6 +789,10 @@ impl Service {
                     auto_researched: true,
                     new_claims_count: new_claims_added,
                     follow_ups,
+                    credibility,
+                    in_trial,
+                    trial_model,
+                    previous_model,
                 });
             }
         }
@@ -643,6 +845,12 @@ impl Service {
         }
 
         let follow_ups = extract_follow_ups(&content, message);
+        let credibility = Some(crate::credibility::evaluate_answer(
+            &content,
+            &live_sources,
+            &matching,
+        ));
+
         Ok(ChatResponse {
             role: "assistant".to_string(),
             content,
@@ -654,6 +862,10 @@ impl Service {
             auto_researched: true,
             new_claims_count: new_claims_added,
             follow_ups,
+            credibility,
+            in_trial,
+            trial_model,
+            previous_model,
         })
     }
 
@@ -725,6 +937,7 @@ impl Service {
                     score: h.score,
                     providers: h.providers,
                     published,
+                    credibility: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -749,6 +962,7 @@ impl Service {
                         score: 1.0 / (idx + 1) as f32,
                         providers: vec!["demo".to_string()],
                         published: None,
+                        credibility: None,
                     });
                 }
             }
@@ -761,6 +975,17 @@ impl Service {
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
+
+        // Oblicz transparentny wskaźnik wiarygodności dla każdego źródła (Evidence & Credibility Judge)
+        let matching_claims = self.store.list_claims(50).unwrap_or_default();
+        let all_hits_clone = hits.clone();
+        for hit in &mut hits {
+            hit.credibility = Some(crate::credibility::evaluate_hit(
+                hit,
+                &all_hits_clone,
+                &matching_claims,
+            ));
+        }
 
         let total = hits.len();
         Ok(SearchWebResponse {
@@ -1085,9 +1310,10 @@ fn build_llm_client(cfg: &Config) -> Result<Arc<dyn bse_llm::Llm>, anyhow::Error
             let preset = bse_llm::ModelCatalog::find(&cfg.llm.embedded_model)
                 .unwrap_or_else(bse_llm::ModelCatalog::default_preset);
             if storage.is_installed(&preset) {
+                let max_toks = (cfg.llm.max_tokens as usize).clamp(64, 250);
                 let embedded = bse_llm::EmbeddedLlm::load(&storage, preset)
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?
-                    .with_max_tokens(cfg.llm.max_tokens as usize);
+                    .with_max_tokens(max_toks);
                 Ok(Arc::new(embedded))
             } else {
                 Err(anyhow::anyhow!(

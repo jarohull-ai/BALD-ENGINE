@@ -71,6 +71,34 @@ impl ModelCatalog {
                     .to_string(),
                 context_size: 8192,
             },
+            ModelPreset {
+                id: "smollm2-1.7b-instruct".to_string(),
+                name: "SmolLM2 1.7B Instruct".to_string(),
+                description: "Nowoczesny, lekki model badawczy Hugging Face zoptymalizowany pod kątem faktografii (1.05 GB)."
+                    .to_string(),
+                filename: "smollm2-1.7b-instruct-q4_k_m.gguf".to_string(),
+                tokenizer_filename: "smollm2-1.7b-tokenizer.json".to_string(),
+                size_bytes: 1_050_000_000,
+                download_url: "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf"
+                    .to_string(),
+                tokenizer_url: "https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct/raw/main/tokenizer.json"
+                    .to_string(),
+                context_size: 4096,
+            },
+            ModelPreset {
+                id: "qwen2.5-3b-instruct".to_string(),
+                name: "Qwen 2.5 3B Instruct (Maksymalna wiedza)".to_string(),
+                description: "Maksymalna głębia analityczna i wnioskowanie (1.95 GB) dla komputerów z >4 GB RAM."
+                    .to_string(),
+                filename: "qwen2.5-3b-instruct-q4_k_m.gguf".to_string(),
+                tokenizer_filename: "qwen2.5-3b-tokenizer.json".to_string(),
+                size_bytes: 1_950_000_000,
+                download_url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
+                    .to_string(),
+                tokenizer_url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/raw/main/tokenizer.json"
+                    .to_string(),
+                context_size: 8192,
+            },
         ]
     }
 
@@ -125,6 +153,12 @@ impl ModelStorage {
         weights.exists()
             && tokenizer.exists()
             && std::fs::metadata(&weights).map(|m| m.len() > 100_000).unwrap_or(false)
+    }
+
+    pub fn is_installed_id(&self, id: &str) -> bool {
+        ModelCatalog::find(id)
+            .map(|preset| self.is_installed(&preset))
+            .unwrap_or(false)
     }
 
     /// Pobiera wagi modelu oraz plik tokenizera bezpośrednio z Hugging Face.

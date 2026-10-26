@@ -49,7 +49,19 @@ pub struct SettingsView {
     pub searxng: SearxngView,
     pub brave: BraveView,
     pub llm: LlmView,
+    pub scout: ScoutView,
     pub env_overrides: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoutView {
+    pub enabled: bool,
+    pub interval_days: u32,
+    pub last_run: Option<String>,
+    pub in_trial: bool,
+    pub trial_model: Option<String>,
+    pub previous_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +141,8 @@ pub struct SettingsUpdate {
     pub max_input_chars: Option<usize>,
     pub max_claims: Option<usize>,
     pub max_attempts: Option<usize>,
+    pub scout_enabled: Option<bool>,
+    pub scout_interval_days: Option<u32>,
 }
 
 pub fn view(config: &Config, config_path: &Path) -> SettingsView {
@@ -178,6 +192,14 @@ pub fn view(config: &Config, config_path: &Path) -> SettingsView {
             max_input_chars: config.llm.max_input_chars,
             max_claims: config.llm.max_claims,
             max_attempts: config.llm.max_attempts,
+        },
+        scout: ScoutView {
+            enabled: config.scout.enabled,
+            interval_days: config.scout.interval_days,
+            last_run: config.scout.last_run.clone(),
+            in_trial: config.scout.in_trial,
+            trial_model: config.scout.trial_model.clone(),
+            previous_model: config.scout.previous_model.clone(),
         },
         env_overrides: env_overrides(config),
     }
@@ -353,6 +375,16 @@ pub fn apply_update(config: &mut Config, update: SettingsUpdate) -> Result<(), S
             return Err(invalid("llm.max_attempts must be between 1 and 4"));
         }
         config.llm.max_attempts = attempts;
+    }
+
+    if let Some(enabled) = update.scout_enabled {
+        config.scout.enabled = enabled;
+    }
+    if let Some(interval) = update.scout_interval_days {
+        if ![7, 14, 30].contains(&interval) {
+            return Err(invalid("scout.interval_days must be 7, 14 or 30"));
+        }
+        config.scout.interval_days = interval;
     }
 
     let primary = config.llm.provider.trim().to_ascii_lowercase();

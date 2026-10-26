@@ -162,6 +162,11 @@ fn router(state: AppState) -> Router {
         .route("/models/discover", get(models_discover))
         .route("/models/embedded", get(embedded_models_get))
         .route("/models/embedded/download", axum::routing::post(embedded_models_download))
+        .route("/models/scout", get(scout_get))
+        .route("/models/scout/check", axum::routing::post(scout_check))
+        .route("/models/trial/start", axum::routing::post(trial_start))
+        .route("/models/trial/commit", axum::routing::post(trial_commit))
+        .route("/models/trial/rollback", axum::routing::post(trial_rollback))
         .route("/chat", axum::routing::post(chat_post))
         .route("/evidence/ingest", axum::routing::post(ingest_post))
         .route("/search", get(search_get).post(search_post))
@@ -259,6 +264,60 @@ async fn embedded_models_download(
         .await
         .map_err(ApiError::from)?;
     Ok(Json(json!({ "success": success })))
+}
+
+async fn scout_get(
+    State(state): State<AppState>,
+) -> Result<Json<crate::scout::ScoutReport>, ApiError> {
+    state
+        .service
+        .scout_report()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn scout_check(
+    State(state): State<AppState>,
+) -> Result<Json<crate::scout::ScoutReport>, ApiError> {
+    state
+        .service
+        .scout_check()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn trial_start(
+    State(state): State<AppState>,
+    Json(payload): Json<crate::scout::StartTrialRequest>,
+) -> Result<Json<crate::scout::TrialActionResponse>, ApiError> {
+    state
+        .service
+        .start_trial(&payload.model_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn trial_commit(
+    State(state): State<AppState>,
+) -> Result<Json<crate::scout::TrialActionResponse>, ApiError> {
+    state
+        .service
+        .commit_trial()
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn trial_rollback(
+    State(state): State<AppState>,
+) -> Result<Json<crate::scout::TrialActionResponse>, ApiError> {
+    state
+        .service
+        .rollback_trial()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 #[derive(Debug, Deserialize)]

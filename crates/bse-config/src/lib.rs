@@ -47,6 +47,7 @@ pub struct Config {
     pub transport: TransportConfig,
     pub llm: LlmConfig,
     pub providers: ProvidersConfig,
+    pub scout: ScoutConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +289,31 @@ pub struct BraveConfig {
     pub api_key: Option<String>,
     /// np. `pl`; `None` = bez filtra kraju.
     pub country: Option<String>,
+}
+
+/// Konfiguracja autonomicznego szperacza modeli AI (Scout Bot) i trybu jazdy próbnej (A/B testing).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScoutConfig {
+    pub enabled: bool,
+    pub interval_days: u32,
+    pub last_run: Option<String>,
+    pub trial_model: Option<String>,
+    pub previous_model: Option<String>,
+    pub in_trial: bool,
+}
+
+impl Default for ScoutConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_days: 7,
+            last_run: None,
+            trial_model: None,
+            previous_model: None,
+            in_trial: false,
+        }
+    }
 }
 
 impl Config {
