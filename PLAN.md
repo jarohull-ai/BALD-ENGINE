@@ -16,6 +16,7 @@ presety chmurowe + lokalne + „dodaj providera”.
 3) **UX "Zero-Config"**: podział ustawień na profil domyślny („po prostu działa”) oraz rozwijany panel „Zaawansowane” (zewnętrzne API, Ollama, własny SearXNG/Tor).
 4) **Autonomiczny Tropiciel Nowych Modeli (*AI Model Scout Bot*)**: wbudowany cykliczny bot badawczy w Zaawansowanych (interwał 7 / 14 / 30 dni), który autonomicznie przeczesuje Hugging Face Hub i benchmarki za nowymi lekkimi modelami (<3B) z obsługą wywoływania narzędzi w PL/EN.
 5) **Jazda Próbna Modeli i Błyskawiczny Rollback (*A/B Sandbox & Instant Rollback*)**: możliwość przetestowania nowo wykrytego modelu w czacie z przyciskami decyzyjnymi `[Zachowaj jako domyślny]` / `[Przywróć poprzedni model]`, z twardą weryfikacją w locie wierności cytatów (`CitationGate`) oraz prędkości token/s na lokalnym sprzęcie.
+6) **Samouczek Pierwszego Startu, Help CLI i Dymki Informacyjne (*Onboarding & In-App Guidance*)**: zaplanowany jako finalny etap wdrożenia: zwięzły przewodnik startowy (bez lania wody), wbudowane podręczne kompendium `/help` oraz dyskretne ikony informacyjne `(i)` z dymkami (tooltips) objaśniającymi każdą funkcję po najechaniu myszką.
 
 **Nowe w 0.3:** D13 Tor/onion poza v1 · D14 seed-core jako action gate, **nie** klasyfikator
 zapytań · D15 edge-radar jako ingress w trybie daemon, **nie** egress · D16 komponenty JFP
@@ -1409,4 +1410,4 @@ roadmapę — plan bez pomiarów to hipoteza.
 | 0.5 | Faza 1: `bse-fetch` (SSRF+robots+cache+ekstrakcja), `bse-index` (Tantivy/BM25), near-duplicate MinHash/LSH, entropia domen, CLI `fetch`/`index add/search/stats`, ADR-006; MSRV 1.88; stan w §19a. |
 | 0.6 | Faza 2: `bse-llm` (Ollama/OpenAI-compatible, endpoint policy), `bse-classify` (claims/stance/encje/PII/fallback), evidence ledger SQLite, `CitationGate` + cytat ≥ 24 znaki, CLI `evidence add/list/show/stats`, ADR-007; stan w §19a. |
 | 0.7 | Faza 3: `bse-api` (Axum loopback, session token, CSP), `bald serve`, frontend React+Tailwind `apps/ui` (claims grid, evidence drawer, settings), Tauri IPC bridge, atomowy config 0600, ADR-008; stan w §19a. |
-| 0.8 | Faza 4 (W toku): Wbudowany Mini-LLM (Qwen 2.5 1.5B Tool-Calling Out-of-the-Box) + Model Decyzyjno-Scoringowy ONNX (Wiarygodność 0–100%, ochrona bazy, re-ranking) + Bot Tropiciel Modeli AI (Auto-Scout co 7/14/30 dni) + Tryb Jazdy Próbnej w czacie z błyskawicznym rollbackiem. |
+| 0.8 | Faza 4 (W toku): Wbudowany Mini-LLM (Qwen 2.5 1.5B Tool-Calling Out-of-the-Box) + Model Decyzyjno-Scoringowy ONNX (Wiarygodność 0–100%, ochrona bazy, re-ranking) + Bot Tropiciel Modeli AI (Auto-Scout co 7/14/30 dni) + Tryb Jazdy Próbnej w czacie z błyskawicznym rollbackiem + Samouczek, Tooltipy `(i)` i Help w UI na finał wydania. |

@@ -90,6 +90,7 @@ Jeszcze nie ma: grafu narracji, diffów archiwum, własnego headless browsera (P
   3. **Interfejs Dwuwarstwowy:** Czysty, intuicyjny interfejs dla użytkownika nietechnicznego („Zero-Config”), z zaawansowanymi opcjami (Ollama, API, Tor) ukrytymi w dedykowanej sekcji Zaawansowane.
   4. **Autonomiczny Bot Tropiciel Modeli (*AI Model Scout*):** wbudowany bot badawczy w Zaawansowanych (interwał 7/14/30 dni), który sam monitoruje rynek AI (Hugging Face Hub, benchmarki), wykrywa premiery modeli <3B z Tool-Callingiem i automatycznie raportuje je zespołowi BALD i użytkownikowi.
   5. **Tryb Jazdy Próbnej (*A/B Sandbox & Instant Rollback*):** pobieranie i testowanie nowego modelu bezpośrednio w czacie z przyciskami `[Zatwierdź i zachowaj]` / `[Przywróć poprzedni model]` pod każdą odpowiedzią, bez ryzyka uszkodzenia konfiguracji.
+  6. **Onboarding, Kompendium Help i Dymki `(i)`:** zwięzły samouczek przy pierwszym uruchomieniu, merytoryczna ściąga `/help` oraz eleganckie dymki informacyjne (tooltips) po najechaniu myszką na ikony informacyjne kafelków i sekcji — zaplanowane na finałowe zapięcie projektu.
 
 ## Szybki start
 
