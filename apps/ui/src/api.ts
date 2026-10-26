@@ -97,12 +97,20 @@ export async function fetchClaim(claimId: string): Promise<ClaimDetail> {
 }
 
 export async function deleteClaim(claimId: string): Promise<{ deleted: boolean; id: string }> {
+  if (isTauriRuntime()) {
+    const deleted = await invoke<boolean>('claim_delete', { claimId });
+    return { deleted, id: claimId };
+  }
   return request<{ deleted: boolean; id: string }>(`/api/claims/${encodeURIComponent(claimId)}`, {
     method: 'DELETE',
   });
 }
 
 export async function clearAllClaims(): Promise<{ cleared: number }> {
+  if (isTauriRuntime()) {
+    const cleared = await invoke<number>('claims_clear');
+    return { cleared };
+  }
   return request<{ cleared: number }>('/api/claims/clear', {
     method: 'POST',
   });
@@ -268,10 +276,16 @@ export async function rollbackTrialModel(): Promise<TrialActionResponse> {
 }
 
 export async function fetchWallet(): Promise<WalletInfo> {
+  if (isTauriRuntime()) {
+    return invoke<WalletInfo>('wallet_get');
+  }
   return request<WalletInfo>('/api/wallet');
 }
 
 export async function redeemVoucher(code: string): Promise<WalletInfo> {
+  if (isTauriRuntime()) {
+    return invoke<WalletInfo>('wallet_redeem', { code });
+  }
   return request<WalletInfo>('/api/wallet/redeem', {
     method: 'POST',
     body: JSON.stringify({ code }),

@@ -3,7 +3,7 @@
 use bse_api::{
     BotRunRecord, ChatRequest, ChatResponse, ClaimDetail, ClaimsResponse, DiscoveryResponse,
     IngestResponse, LedgerStats, NewResearchBot, ResearchBot, SearchWebResponse, Service,
-    SettingsUpdate, SettingsView,
+    SettingsUpdate, SettingsView, WalletInfo,
 };
 
 struct AppState {
@@ -135,6 +135,26 @@ fn bot_runs_list(
     state.service.list_bot_runs(&id, limit).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn claim_delete(state: tauri::State<'_, AppState>, claim_id: String) -> Result<bool, String> {
+    state.service.delete_claim(&claim_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn claims_clear(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    state.service.clear_claims().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn wallet_get(state: tauri::State<'_, AppState>) -> Result<WalletInfo, String> {
+    state.service.wallet().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn wallet_redeem(state: tauri::State<'_, AppState>, code: String) -> Result<WalletInfo, String> {
+    state.service.redeem_voucher(&code).map_err(|e| e.to_string())
+}
+
 fn main() {
     let service = Service::open().expect("cannot open BALD service");
 
@@ -143,6 +163,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             claims_list,
             claim_detail,
+            claim_delete,
+            claims_clear,
             ledger_stats,
             get_settings,
             save_settings,
@@ -155,7 +177,9 @@ fn main() {
             bot_update,
             bot_delete,
             bot_run_now,
-            bot_runs_list
+            bot_runs_list,
+            wallet_get,
+            wallet_redeem
         ])
         .run(tauri::generate_context!())
         .expect("error while running BALD desktop");
