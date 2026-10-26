@@ -26,5 +26,5 @@ pub use settings::{
 
 pub use bse_store::{
     BotRunRecord, ClaimDetail, ClaimSummary, EntityItem, EvidenceItem, LedgerStats, NewResearchBot,
-    ResearchBot,
+    ResearchBot, WalletInfo,
 };
