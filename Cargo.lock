@@ -302,6 +302,7 @@ dependencies = [
  "bse-store",
  "chrono",
  "include_dir",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

@@ -194,6 +194,7 @@ export interface ChatSource {
   url: string;
   domain: string;
   snippet: string;
+  published?: string;
 }
 
 export interface ChatMessageItem {
@@ -207,6 +208,7 @@ export interface ChatMessageItem {
   sources?: ChatSource[];
   autoResearched?: boolean;
   newClaimsCount?: number;
+  followUps?: string[];
   createdAt: string;
 }
 
@@ -225,6 +227,7 @@ export interface ChatResponse {
   sources?: ChatSource[];
   auto_researched?: boolean;
   new_claims_count?: number;
+  follow_ups?: string[];
 }
 
 export interface SearchHit {
@@ -234,6 +237,7 @@ export interface SearchHit {
   snippet: string;
   score: number;
   providers: string[];
+  published?: string;
 }
 
 export interface SearchWebResponse {

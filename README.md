@@ -71,6 +71,14 @@ Jeszcze nie ma: grafu narracji, diffów archiwum, własnego headless browsera (P
 - **Problem:** Przy pustym Rejestrze użytkownik widział jedynie instrukcję CLI, a brak pasujących filtrów blokował badanie.
 - **Rozwiązanie:** Wbudowano formularz natychmiastowego badania tematu `[Zbadaj w sieci]` bezpośrednio w widoku Rejestru, wraz z gotowymi przykładami i obsługą dowolnych zapytań badawczych.
 
+### 5. Chronologiczny Porządek Źródeł (Od Najnowszych do Najstarszych)
+- **Problem:** Informacje w internecie pojawiają się w różnym czasie, a losowa kolejność wyników utrudniała śledzenie rozwoju narracji i najświeższych doniesień.
+- **Rozwiązanie:** Zaimplementowano moduł heurystycznej ekstrakcji dat (`extract_date_heuristic`), który normalizuje daty publikacji z metadanych, nagłówków, adresów URL oraz snippetów. Wszystkie źródła (`live_sources`) oraz wyniki wyszukiwania są automatycznie sortowane chronologicznie od najświeższych do najstarszych, a model otrzymuje wytyczne do przedstawiania faktów i ewolucji zdarzeń w porządku czasowym.
+
+### 6. Interaktywne Drążenie Tematu (Follow-up / Proponowane Wątki)
+- **Problem:** Po otrzymaniu odpowiedzi użytkownik musiał ręcznie wymyślać kolejne zapytania, aby zgłębić lokalne tajemnice lub wątki poboczne.
+- **Rozwiązanie:** Silnik po każdej odpowiedzi generuje 3 intrygujące, konkretne kierunki dalszego śledztwa, renderowane w UI jako klikalne przyciski (pigułki). Kliknięcie dowolnej propozycji natychmiast uruchamia kolejne dochodzenie sieciowe.
+
 ## Szybki start
 
 ```bash

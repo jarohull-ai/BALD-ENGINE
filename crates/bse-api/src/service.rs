@@ -96,6 +96,8 @@ pub struct ChatSource {
     pub url: String,
     pub domain: String,
     pub snippet: String,
+    #[serde(default)]
+    pub published: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +114,8 @@ pub struct ChatResponse {
     pub auto_researched: bool,
     #[serde(default)]
     pub new_claims_count: usize,
+    #[serde(default)]
+    pub follow_ups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +126,8 @@ pub struct SearchHit {
     pub snippet: String,
     pub score: f32,
     pub providers: Vec<String>,
+    #[serde(default)]
+    pub published: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,6 +312,7 @@ impl Service {
                 sources: Vec::new(),
                 auto_researched: false,
                 new_claims_count: 0,
+                follow_ups: Vec::new(),
             });
         }
 
@@ -332,6 +339,7 @@ impl Service {
                         sources: Vec::new(),
                         auto_researched: false,
                         new_claims_count: count,
+                        follow_ups: Vec::new(),
                     });
                 }
                 Err(err) => {
@@ -345,6 +353,7 @@ impl Service {
                         sources: Vec::new(),
                         auto_researched: false,
                         new_claims_count: 0,
+                        follow_ups: Vec::new(),
                     });
                 }
             }
@@ -369,6 +378,7 @@ impl Service {
                 sources: Vec::new(),
                 auto_researched: false,
                 new_claims_count: 0,
+                follow_ups: Vec::new(),
             });
         }
 
@@ -381,7 +391,7 @@ impl Service {
         let mut new_claims_added = 0;
 
         if is_search_topic {
-            if let Ok(search_resp) = self.search_web(message, 6).await {
+            if let Ok(search_resp) = self.search_web(message, 8).await {
                 for hit in search_resp.hits {
                     if (hit.url.starts_with("http://") || hit.url.starts_with("https://"))
                         && !hit.url.contains("example.com")
@@ -391,10 +401,19 @@ impl Service {
                             url: hit.url,
                             domain: hit.domain,
                             snippet: hit.snippet,
+                            published: hit.published,
                         });
                     }
                 }
             }
+
+            // Posortuj źródła chronologicznie: od najnowszych do najstarszych
+            live_sources.sort_by(|a, b| match (&a.published, &b.published) {
+                (Some(da), Some(db)) => db.cmp(da),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            });
 
             // Auto-ingest top 2 web sources do Rejestru Twierdzeń (z limitem czasu 3s na źródło)
             for src in live_sources.iter().take(2) {
@@ -427,14 +446,21 @@ impl Service {
             let mut context_block = String::new();
 
             if !live_sources.is_empty() {
-                context_block
-                    .push_str("\n\nAKTUALNE ŹRÓDŁA Z INTERNETU (cytuj jako [1], [2] itp.):\n");
+                context_block.push_str(
+                    "\n\nAKTUALNE ŹRÓDŁA Z INTERNETU (ułożone chronologicznie od najnowszych do najstarszych, cytuj jako [1], [2] itp.):\n",
+                );
                 for (i, s) in live_sources.iter().enumerate() {
+                    let date_str = s
+                        .published
+                        .as_deref()
+                        .map(|d| format!(" [Data: {d}]"))
+                        .unwrap_or_default();
                     context_block.push_str(&format!(
-                        "[{}] \"{}\" ({}) - {}\nURL: {}\n\n",
+                        "[{}] \"{}\" ({}){} - {}\nURL: {}\n\n",
                         i + 1,
                         s.title,
                         s.domain,
+                        date_str,
                         s.snippet,
                         s.url
                     ));
@@ -457,14 +483,18 @@ impl Service {
             let system = "Jesteś BALD — autonomicznym silnikiem badawczym OSINT i weryfikacji faktów (Claim, Narrative & Source Evidence Engine), działającym na poziomie Perplexity/Firecrawl.\n\
             ZASADY ANALIZY:\n\
             1. Każdy fakt i twierdzenie popieraj numerowanym odnośnikiem źródłowym [1], [2] itp. odnoszącym się do dostarczonych źródeł internetowych.\n\
-            2. NIE CENZURUJ ani nie usuwaj nazwisk osób publicznych, autorów, polityków, badaczy, urzędników i sygnalistów (np. Klaus Schwab, Rob Brotherton, Edward Snowden, autorzy ustaw i raportów). Wymieniaj ich z nazwiska i roli. Zasada prywatności dotyczy tylko osób prywatnych i wrażliwych danych PII (PESEL, adresy domowe).\n\
-            3. Oddzielaj twarde fakty i dowody źródłowe od narracji, domniemań i spekulacji.\n\
-            4. Na końcu odpowiedzi umieść czytelną sekcję '### Źródła' z ponumerowaną listą linków URL.\n\
-            5. Odpowiadaj wyczerpująco, profesjonalnie, neutralnie i w języku polskim.";
+            2. CHRONOLOGIA: Informacje i wydarzenia w tekście oraz listę źródeł przedstawiaj w porządku chronologicznym — od najnowszych publikacji i doniesień do najstarszych źródeł i korzeni historycznych. Przy kluczowych faktach podawaj daty lub lata publikacji i zdarzeń.\n\
+            3. NIE CENZURUJ ani nie usuwaj nazwisk osób publicznych, autorów, polityków, badaczy, urzędników i sygnalistów (np. Klaus Schwab, Rob Brotherton, Edward Snowden, autorzy ustaw i raportów). Wymieniaj ich z nazwiska i roli. Zasada prywatności dotyczy tylko osób prywatnych i wrażliwych danych PII (PESEL, adresy domowe).\n\
+            4. Oddzielaj twarde fakty i dowody źródłowe od narracji, domniemań i spekulacji.\n\
+            5. Na końcu odpowiedzi ZAWSZE umieść:\n\
+               - Sekcję '### Źródła' z ponumerowaną listą linków URL uporządkowaną chronologicznie,\n\
+               - Sekcję '### Proponowane kierunki śledztwa:' zawierającą dokładnie 3 intrygujące, konkretne pytania lub wątki pogłębiające sprawę (np. konkretne podziemia, artefakty, klątwy czy dokumenty).\n\
+            6. Odpowiadaj wyczerpująco, profesjonalnie, neutralnie i w języku polskim.";
 
             let prompt = format!("Pytanie / temat użytkownika: {message}{context_block}");
 
             if let Ok(answer) = client.complete_text(system, &prompt).await {
+                let follow_ups = extract_follow_ups(&answer, message);
                 return Ok(ChatResponse {
                     role: "assistant".to_string(),
                     content: answer,
@@ -475,6 +505,7 @@ impl Service {
                     sources: live_sources,
                     auto_researched: true,
                     new_claims_count: new_claims_added,
+                    follow_ups,
                 });
             }
         }
@@ -483,15 +514,21 @@ impl Service {
         let mut content = String::new();
         if !live_sources.is_empty() {
             content.push_str(&format!(
-                "Wyniki zbadania sieci na żywo dla zapytania **{}**:\n\n",
+                "Wyniki zbadania sieci na żywo dla zapytania **{}** (uporządkowane chronologicznie):\n\n",
                 message
             ));
             for (i, s) in live_sources.iter().enumerate() {
+                let date_str = s
+                    .published
+                    .as_deref()
+                    .map(|d| format!(" ({d})"))
+                    .unwrap_or_default();
                 content.push_str(&format!(
-                    "[{}] **{}** (`{}`)\n{}\n🔗 {}\n\n",
+                    "[{}] **{}** (`{}`){}\n{}\n🔗 {}\n\n",
                     i + 1,
                     s.title,
                     s.domain,
+                    date_str,
                     s.snippet,
                     s.url
                 ));
@@ -520,6 +557,7 @@ impl Service {
             content = "Nie znaleziono jeszcze wystarczających informacji na ten temat w sieci ani w lokalnej bazie. Możesz wkleić bezpośredni link (URL) do artykułu lub dokumentu, a zbadam go pod kątem twierdzeń i cytatów.".to_string();
         }
 
+        let follow_ups = extract_follow_ups(&content, message);
         Ok(ChatResponse {
             role: "assistant".to_string(),
             content,
@@ -530,6 +568,7 @@ impl Service {
             sources: live_sources,
             auto_researched: true,
             new_claims_count: new_claims_added,
+            follow_ups,
         })
     }
 
@@ -590,6 +629,9 @@ impl Service {
             .into_iter()
             .map(|h| {
                 let domain = domain_of(&h.canonical_url).to_string();
+                let published = h
+                    .published
+                    .or_else(|| extract_date_heuristic(&h.snippet, &h.canonical_url));
                 SearchHit {
                     title: h.title,
                     url: h.canonical_url,
@@ -597,6 +639,7 @@ impl Service {
                     snippet: h.snippet,
                     score: h.score,
                     providers: h.providers,
+                    published,
                 }
             })
             .collect::<Vec<_>>();
@@ -620,10 +663,19 @@ impl Service {
                         snippet: dh.snippet,
                         score: 1.0 / (idx + 1) as f32,
                         providers: vec!["demo".to_string()],
+                        published: None,
                     });
                 }
             }
         }
+
+        // Posortuj trafienia chronologicznie: od najnowszych do najstarszych
+        hits.sort_by(|a, b| match (&a.published, &b.published) {
+            (Some(da), Some(db)) => db.cmp(da),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
 
         let total = hits.len();
         Ok(SearchWebResponse {
@@ -820,6 +872,115 @@ pub fn extract_url(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+pub fn extract_date_heuristic(snippet: &str, url: &str) -> Option<String> {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    static RELATIVE_RE: OnceLock<Regex> = OnceLock::new();
+    let rel_re = RELATIVE_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)\b(\d+)\s*(godz|godzin|dni|dn|hours?|days?|minut|minutes?)\s*(temu|ago)\b"#,
+        )
+        .unwrap()
+    });
+
+    if rel_re.is_match(snippet) || snippet.contains("wczoraj") || snippet.contains("yesterday") {
+        return Some(chrono::Utc::now().format("%Y-%m-%d").to_string());
+    }
+
+    // 1. ISO date: YYYY-MM-DD
+    static ISO_RE: OnceLock<Regex> = OnceLock::new();
+    let iso_re = ISO_RE.get_or_init(|| {
+        Regex::new(r#"\b(20[12]\d)-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b"#).unwrap()
+    });
+    if let Some(cap) = iso_re.captures(snippet).or_else(|| iso_re.captures(url)) {
+        return Some(cap[0].to_string());
+    }
+
+    // 2. URL date: /YYYY/MM/DD or /YYYY/MM/
+    static URL_DATE_RE: OnceLock<Regex> = OnceLock::new();
+    let url_re = URL_DATE_RE.get_or_init(|| {
+        Regex::new(r#"/(20[12]\d)/(0[1-9]|1[0-2])(?:/(0[1-9]|[12]\d|3[01]))?"#).unwrap()
+    });
+    if let Some(cap) = url_re.captures(url) {
+        if let Some(day) = cap.get(3) {
+            return Some(format!("{}-{}-{}", &cap[1], &cap[2], day.as_str()));
+        } else {
+            return Some(format!("{}-{}-01", &cap[1], &cap[2]));
+        }
+    }
+
+    // 3. Polish/English text date: e.g. "24 paź 2024", "15 May 2023"
+    static TEXT_DATE_RE: OnceLock<Regex> = OnceLock::new();
+    let text_re = TEXT_DATE_RE.get_or_init(|| {
+        Regex::new(r#"(?i)\b([0-3]?\d)\s+([a-ząćęłńóśźż]{3,10})\s+(20[12]\d)\b"#).unwrap()
+    });
+    if let Some(cap) = text_re.captures(snippet) {
+        let day: u32 = cap[1].parse().unwrap_or(1);
+        let month_str = cap[2].to_lowercase();
+        let year = &cap[3];
+        let m = match month_str.as_str() {
+            m if m.starts_with("sty") || m.starts_with("jan") => "01",
+            m if m.starts_with("lut") || m.starts_with("feb") => "02",
+            m if m.starts_with("mar") => "03",
+            m if m.starts_with("kwi") || m.starts_with("apr") => "04",
+            m if m.starts_with("maj") || m.starts_with("may") => "05",
+            m if m.starts_with("cze") || m.starts_with("jun") => "06",
+            m if m.starts_with("lip") || m.starts_with("jul") => "07",
+            m if m.starts_with("sie") || m.starts_with("aug") => "08",
+            m if m.starts_with("wrz") || m.starts_with("sep") => "09",
+            m if m.starts_with("paź") || m.starts_with("paz") || m.starts_with("oct") => "10",
+            m if m.starts_with("lis") || m.starts_with("nov") => "11",
+            m if m.starts_with("gru") || m.starts_with("dec") => "12",
+            _ => "01",
+        };
+        return Some(format!("{year}-{m}-{day:02}"));
+    }
+
+    // 4. Any explicit 4-digit year in 2010-2026 range
+    static YEAR_RE: OnceLock<Regex> = OnceLock::new();
+    let year_re = YEAR_RE.get_or_init(|| Regex::new(r#"\b(20[12]\d)\b"#).unwrap());
+    if let Some(cap) = year_re.captures(snippet).or_else(|| year_re.captures(url)) {
+        return Some(format!("{}-01-01", &cap[1]));
+    }
+
+    None
+}
+
+pub fn extract_follow_ups(text: &str, topic: &str) -> Vec<String> {
+    let mut follow_ups = Vec::new();
+    if let Some(pos) = text.find("### Proponowane kierunki śledztwa") {
+        let after = &text[pos..];
+        for line in after.lines().skip(1) {
+            let trimmed = line.trim();
+            if trimmed.starts_with('-')
+                || trimmed.starts_with('*')
+                || (trimmed.len() > 3
+                    && trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
+                    && trimmed.contains('.'))
+            {
+                let clean = trimmed
+                    .trim_start_matches(|c: char| {
+                        c == '-' || c == '*' || c.is_ascii_digit() || c == '.' || c == ' '
+                    })
+                    .trim();
+                if clean.len() > 5 {
+                    follow_ups.push(clean.to_string());
+                }
+            }
+            if follow_ups.len() >= 3 {
+                break;
+            }
+        }
+    }
+    if follow_ups.is_empty() {
+        follow_ups.push(format!("Dowody źródłowe i dokumenty: {topic}"));
+        follow_ups.push(format!("Tło historyczne i początki: {topic}"));
+        follow_ups.push(format!("Kluczowe postacie i instytucje: {topic}"));
+    }
+    follow_ups
 }
 
 fn classify_options(cfg: &Config) -> ClassifyOptions {
@@ -1107,5 +1268,46 @@ mod tests {
         assert!(service.list_bots().expect("list bots").is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn extract_date_heuristic_works() {
+        assert_eq!(
+            extract_date_heuristic(
+                "Raport z 24 paź 2024 dotyczący schronów",
+                "https://news.pl/a"
+            ),
+            Some("2024-10-24".to_string())
+        );
+        assert_eq!(
+            extract_date_heuristic(
+                "Wydarzenia archiwalne",
+                "https://portal.pl/2023/05/12/artykul"
+            ),
+            Some("2023-05-12".to_string())
+        );
+        assert_eq!(
+            extract_date_heuristic("Dokument z 2021-08-15 o podziemiach", "https://doc.org"),
+            Some("2021-08-15".to_string())
+        );
+        assert_eq!(
+            extract_date_heuristic("Opublikowano 3 dni temu w mediach", "https://news.com"),
+            Some(chrono::Utc::now().format("%Y-%m-%d").to_string())
+        );
+    }
+
+    #[test]
+    fn extract_follow_ups_parses_sections_or_generates_defaults() {
+        let text_with_section = "Analiza Krakowa.\n\n### Źródła\n1. link\n\n### Proponowane kierunki śledztwa:\n- Czakram Wawelski — dowody i archiwa\n- Tunele i schrony Nowej Huty\n- Klątwa Jagiellończyka 1973";
+        let follow_ups = extract_follow_ups(text_with_section, "Kraków");
+        assert_eq!(follow_ups.len(), 3);
+        assert_eq!(follow_ups[0], "Czakram Wawelski — dowody i archiwa");
+        assert_eq!(follow_ups[1], "Tunele i schrony Nowej Huty");
+        assert_eq!(follow_ups[2], "Klątwa Jagiellończyka 1973");
+
+        let text_without = "Zwykły tekst bez sekcji.";
+        let defaults = extract_follow_ups(text_without, "Kraków");
+        assert_eq!(defaults.len(), 3);
+        assert!(defaults[0].contains("Kraków"));
     }
 }

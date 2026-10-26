@@ -106,6 +106,7 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
           sources: response.sources,
           autoResearched: response.auto_researched,
           newClaimsCount: response.new_claims_count,
+          followUps: response.follow_ups,
           createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
 
@@ -353,10 +354,11 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
                     {/* Perplexity-style Live Research Sources Shelf */}
                     {msg.sources && msg.sources.length > 0 && (
                       <div className="mb-3.5 space-y-2 border-b border-white/[0.06] pb-3">
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-cyan-300">
                             <Globe className="h-3.5 w-3.5 text-cyan-400" />
                             <span>Zbadano na żywo w sieci ({msg.sources.length} źródeł)</span>
+                            <span className="text-[10px] font-normal text-slate-500">· od najnowszych</span>
                           </div>
                           {msg.newClaimsCount && msg.newClaimsCount > 0 ? (
                             <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-medium text-amber-300/90">
@@ -382,6 +384,11 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
                                 <span className="truncate text-[10px] font-medium text-slate-400 group-hover:text-cyan-300">
                                   {src.domain}
                                 </span>
+                                {src.published && (
+                                  <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-mono text-cyan-200/80">
+                                    {src.published}
+                                  </span>
+                                )}
                                 <ExternalLink className="ml-auto h-2.5 w-2.5 shrink-0 text-slate-500 group-hover:text-cyan-300" />
                               </div>
                               <p className="mt-1 line-clamp-2 text-[11px] font-semibold text-slate-200 group-hover:text-white">
@@ -496,6 +503,29 @@ export function ChatView({ onOpenClaim, onSwitchToLedger }: ChatViewProps) {
                                 {c.document_count} źródeł · {c.evidence_count} cytatów
                               </p>
                             </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Follow-up suggestions (Drąż temat) */}
+                    {msg.followUps && msg.followUps.length > 0 && (
+                      <div className="mt-3.5 space-y-1.5 border-t border-white/[0.06] pt-3">
+                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-300/90">
+                          <Compass className="h-3 w-3 text-amber-300" />
+                          <span>Proponowane kierunki śledztwa (Drąż temat):</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                          {msg.followUps.map((q, qIdx) => (
+                            <button
+                              key={qIdx}
+                              type="button"
+                              onClick={() => void handleSendChat(q)}
+                              className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-1 text-left text-[11px] text-slate-300 transition hover:border-amber-400/35 hover:bg-amber-400/10 hover:text-amber-200"
+                            >
+                              <Sparkles className="h-2.5 w-2.5 shrink-0 text-amber-300/70" />
+                              <span>{q}</span>
+                            </button>
                           ))}
                         </div>
                       </div>
