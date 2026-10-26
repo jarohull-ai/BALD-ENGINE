@@ -21,7 +21,7 @@ Error generating stack: `+e.message+`
 
 `;for(let[t,n]of v.entries())e+=`### ${t+1}. [${n.title||n.canonical_url}](${n.canonical_url})\n`,e+=`- **Domena:** \`${n.domain}\`\n`,e+=`- **Stance:** \`${n.stance}\` (siła: ${Math.round(n.strength*100)}%)\n`,e+=`- **Dosłowny cytat:** „${n.quote}”\n`,e+=`- **Hash cytatu (SHA-256):** \`${n.quote_hash}\`\n\n`;if(y.length>0){e+=`---
 
-## Encje powiązane (wyłącznie nieosobowe)
+## Powiązane podmioty i encje (Public Actors & Entities)
 
 `;for(let t of y)e+=`- **${t.name}** (${t.kind})\n`;e+=`
 `}e+=`---

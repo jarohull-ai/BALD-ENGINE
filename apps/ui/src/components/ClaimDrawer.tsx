@@ -217,7 +217,7 @@ export function ClaimDrawer({
     }
 
     if (entities.length > 0) {
-      md += `---\n\n## Encje powiązane (wyłącznie nieosobowe)\n\n`;
+      md += `---\n\n## Powiązane podmioty i encje (Public Actors & Entities)\n\n`;
       for (const ent of entities) {
         md += `- **${ent.name}** (${ent.kind})\n`;
       }
