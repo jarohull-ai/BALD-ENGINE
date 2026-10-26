@@ -1,13 +1,19 @@
 # BALD SEARCH ENGINE — plan architektury
 
-**Wersja:** 0.7 (plan + fazy 0–3)
-**Data:** 2026-10-25
+**Wersja:** 0.8 (plan + fazy 0–4)
+**Data:** 2026-10-26
 **Stack:** Rust, desktop-first (Tauri), web-first (`bald serve`), lokalny-first, chmura opcjonalna
 **Status:** fazy 0–3 zrealizowane; silnik, crawler, ledger, API Axum i frontend React działają w pełni;
+faza 4 (wbudowany Mini-LLM z Tool-Callingiem Out-of-the-Box + Model Decyzyjno-Scoringowy) w planie architektonicznym;
 szczegóły decyzji w §16, stan implementacji w §19a
 
 **Decyzje zamykające v0.1:** Tauri · Leptos · bez własnego crawlera w v1 · PL+EN ·
 presety chmurowe + lokalne + „dodaj providera”.
+
+**Nowe w 0.8:** Faza 4 — architektura dwusilnikowa:
+1) **Wbudowany Mini-LLM (Out-of-the-Box)**: Qwen 2.5 1.5B Instruct (GGUF Q4, ~950 MB) osadzony bezpośrednio w Rust (`candle`/`llama-cpp-rs`) z obsługą natywnego *Function / Tool Calling* (narzędzia `search_web`, `ingest_and_verify`, `query_ledger`) oraz *Grammar-Constrained Decoding* (100% gwarancja poprawnego JSON). Działa natychmiast bez instalacji zewnętrznych serwisów (Ollama/Python).
+2) **Model Decyzyjno-Scoringowy (Evidence & Credibility Judge)**: lekki silnik tabelaryczny (ONNX / Kumo-Tabular / PFN, 50–120 MB) pełniący rolę obiektywnego sędziego. Wylicza twardy wskaźnik wiarygodności (0–100%), chroni Rejestr Twierdzeń przed farmami botów, wykrywa skoordynowane kampanie narracyjne i wykonuje faktograficzny re-ranking.
+3) **UX "Zero-Config"**: podział ustawień na profil domyślny („po prostu działa”) oraz rozwijany panel „Zaawansowane” (zewnętrzne API, Ollama, własny SearXNG/Tor).
 
 **Nowe w 0.3:** D13 Tor/onion poza v1 · D14 seed-core jako action gate, **nie** klasyfikator
 zapytań · D15 edge-radar jako ingress w trybie daemon, **nie** egress · D16 komponenty JFP
@@ -1401,3 +1407,4 @@ roadmapę — plan bez pomiarów to hipoteza.
 | 0.5 | Faza 1: `bse-fetch` (SSRF+robots+cache+ekstrakcja), `bse-index` (Tantivy/BM25), near-duplicate MinHash/LSH, entropia domen, CLI `fetch`/`index add/search/stats`, ADR-006; MSRV 1.88; stan w §19a. |
 | 0.6 | Faza 2: `bse-llm` (Ollama/OpenAI-compatible, endpoint policy), `bse-classify` (claims/stance/encje/PII/fallback), evidence ledger SQLite, `CitationGate` + cytat ≥ 24 znaki, CLI `evidence add/list/show/stats`, ADR-007; stan w §19a. |
 | 0.7 | Faza 3: `bse-api` (Axum loopback, session token, CSP), `bald serve`, frontend React+Tailwind `apps/ui` (claims grid, evidence drawer, settings), Tauri IPC bridge, atomowy config 0600, ADR-008; stan w §19a. |
+| 0.8 | Faza 4 (W toku): Wbudowany Mini-LLM (Qwen 2.5 1.5B Tool-Calling Out-of-the-Box) + Model Decyzyjno-Scoringowy ONNX (Wskaźnik wiarygodności 0–100%, ochrona bazy, re-ranking dowodowy) + Uproszczony UX z profilem Zaawansowane. |
