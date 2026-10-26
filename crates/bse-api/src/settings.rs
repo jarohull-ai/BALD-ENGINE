@@ -77,6 +77,8 @@ pub struct LlmView {
     pub fallback_provider: String,
     pub base_url: String,
     pub model: String,
+    pub embedded_model: String,
+    pub embedded_installed: bool,
     pub api_key_env: String,
     pub api_key_configured: bool,
     pub api_key_source: String,
@@ -110,6 +112,7 @@ pub struct SettingsUpdate {
     pub llm_provider: Option<String>,
     pub llm_base_url: Option<String>,
     pub llm_model: Option<String>,
+    pub embedded_model: Option<String>,
     pub llm_api_key_env: Option<String>,
     pub llm_api_key: Option<String>,
     pub clear_llm_api_key: Option<bool>,
@@ -133,6 +136,11 @@ pub fn view(config: &Config, config_path: &Path) -> SettingsView {
     let llm_source = llm_key_source(config);
     let fallback_source = fallback_key_source(config);
 
+    let storage = bse_llm::ModelStorage::default();
+    let preset = bse_llm::ModelCatalog::find(&config.llm.embedded_model)
+        .unwrap_or_else(bse_llm::ModelCatalog::default_preset);
+    let embedded_installed = storage.is_installed(&preset);
+
     SettingsView {
         config_path: config_path.display().to_string(),
         language: config.app.language.clone(),
@@ -153,6 +161,8 @@ pub fn view(config: &Config, config_path: &Path) -> SettingsView {
             fallback_provider: config.llm.fallback_provider.clone(),
             base_url: config.llm.base_url.clone(),
             model: config.llm.model.clone(),
+            embedded_model: config.llm.embedded_model.clone(),
+            embedded_installed,
             api_key_env: config.llm.api_key_env.clone(),
             api_key_configured: llm_source != "none",
             api_key_source: llm_source.to_string(),
@@ -231,10 +241,13 @@ pub fn apply_update(config: &mut Config, update: SettingsUpdate) -> Result<(), S
 
     if let Some(provider) = update.llm_provider {
         let provider = provider.trim().to_ascii_lowercase();
-        if !matches!(provider.as_str(), "ollama" | "openai" | "none") {
-            return Err(invalid("llm.provider must be ollama, openai or none"));
+        if !matches!(provider.as_str(), "embedded" | "built-in" | "ollama" | "openai" | "none") {
+            return Err(invalid("llm.provider must be embedded, ollama, openai or none"));
         }
         config.llm.provider = provider;
+    }
+    if let Some(embedded_model) = update.embedded_model {
+        config.llm.embedded_model = embedded_model.trim().to_string();
     }
     if let Some(base_url) = update.llm_base_url {
         config.llm.base_url = endpoint(&base_url, "llm.base_url")?;

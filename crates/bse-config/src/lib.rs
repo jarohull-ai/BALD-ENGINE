@@ -172,6 +172,7 @@ pub struct LlmConfig {
     pub fallback_provider: String,
     pub base_url: String,
     pub model: String,
+    pub embedded_model: String,
     pub api_key_env: String,
     /// Lokalny fallback dla UI; env ma pierwszeństwo.
     pub api_key: Option<String>,
@@ -196,6 +197,7 @@ impl Default for LlmConfig {
             fallback_provider: "heuristic".to_string(),
             base_url: "http://127.0.0.1:11434".to_string(),
             model: "llama3.1:8b".to_string(),
+            embedded_model: "qwen2.5-0.5b-instruct".to_string(),
             api_key_env: "OLLAMA_API_KEY".to_string(),
             api_key: None,
             fallback_base_url: "https://api.openai.com/v1".to_string(),
@@ -614,10 +616,11 @@ tor_socks = "127.0.0.1:9050"
 onion_index = false
 
 [llm]
-provider = "ollama"          # ollama | openai | none
+provider = "ollama"          # embedded | ollama | openai | none
 fallback_provider = "heuristic"  # none | heuristic | ollama | openai
 base_url = "http://127.0.0.1:11434"
 model = "llama3.1:8b"
+embedded_model = "qwen2.5-0.5b-instruct"  # qwen2.5-0.5b-instruct | qwen2.5-1.5b-instruct
 api_key_env = "OLLAMA_API_KEY"   # env ma pierwszeństwo
 # api_key = "..."               # opcjonalny fallback UI; plik ma 0600
 fallback_base_url = "https://api.openai.com/v1"

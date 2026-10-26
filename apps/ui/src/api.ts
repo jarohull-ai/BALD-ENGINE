@@ -5,6 +5,7 @@ import type {
   ClaimDetail,
   ClaimsResponse,
   DiscoveryResponse,
+  EmbeddedModelsResponse,
   IngestResponse,
   NewResearchBot,
   ResearchBot,
@@ -114,6 +115,23 @@ export async function discoverModels(): Promise<DiscoveryResponse> {
     return invoke<DiscoveryResponse>('discover_models');
   }
   return request<DiscoveryResponse>('/api/models/discover');
+}
+
+export async function fetchEmbeddedModels(): Promise<EmbeddedModelsResponse> {
+  if (isTauriRuntime()) {
+    return invoke<EmbeddedModelsResponse>('embedded_models_get');
+  }
+  return request<EmbeddedModelsResponse>('/api/models/embedded');
+}
+
+export async function downloadEmbeddedModel(modelId: string): Promise<{ success: boolean }> {
+  if (isTauriRuntime()) {
+    return invoke<{ success: boolean }>('embedded_models_download', { payload: { model_id: modelId } });
+  }
+  return request<{ success: boolean }>('/api/models/embedded/download', {
+    method: 'POST',
+    body: JSON.stringify({ model_id: modelId }),
+  });
 }
 
 export async function sendChatMessage(requestPayload: ChatRequest): Promise<ChatResponse> {

@@ -16,7 +16,7 @@ use bse_config::{config_path, expand_tilde, Config, ConfigError};
 use bse_core::{Gate, GateCtx, GateDecision, GatePurpose, Lang, Provider};
 use bse_fetch::{FetchCache, FetchOptions, Fetcher};
 use bse_guard::{AuditLog, RulesGate};
-use bse_llm::{Llm, LlmClient, LlmProvider, LlmSettings};
+use bse_llm::{LlmClient, LlmProvider, LlmSettings};
 use bse_pipeline::{domain_of, EvidenceOptions, EvidencePipeline, SearchEngine, SearchOptions};
 use bse_providers::{
     BraveProvider, DemoProvider, DuckDuckGoProvider, SearxngProvider, WikipediaProvider,
@@ -88,6 +88,23 @@ pub struct IngestResponse {
     pub claims_rejected: usize,
     pub accepted: Vec<AcceptedClaimInfo>,
     pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddedModelStatusItem {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub size_bytes: u64,
+    pub installed: bool,
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddedModelsResponse {
+    pub active_provider: String,
+    pub current_model_id: String,
+    pub models: Vec<EmbeddedModelStatusItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,16 +254,69 @@ impl Service {
         crate::discovery::discover_local_engines().await
     }
 
+    pub fn list_embedded_models(&self) -> Result<EmbeddedModelsResponse, ServiceError> {
+        let config = self.effective_config()?;
+        let storage = bse_llm::ModelStorage::default();
+        let current_id = config.llm.embedded_model.clone();
+        let models = bse_llm::ModelCatalog::available_models()
+            .into_iter()
+            .map(|preset| {
+                let installed = storage.is_installed(&preset);
+                let is_current = preset.id == current_id;
+                EmbeddedModelStatusItem {
+                    id: preset.id,
+                    name: preset.name,
+                    description: preset.description,
+                    size_bytes: preset.size_bytes,
+                    installed,
+                    is_current,
+                }
+            })
+            .collect();
+
+        Ok(EmbeddedModelsResponse {
+            active_provider: config.llm.provider.clone(),
+            current_model_id: current_id,
+            models,
+        })
+    }
+
+    pub async fn download_embedded_model(&self, model_id: &str) -> Result<bool, ServiceError> {
+        let preset = bse_llm::ModelCatalog::find(model_id)
+            .ok_or_else(|| ServiceError::NotFound(format!("Model {model_id} nie został znaleziony")))?;
+        let storage = bse_llm::ModelStorage::default();
+        if storage.is_installed(&preset) {
+            return Ok(true);
+        }
+        storage
+            .download(&preset, |_downloaded, _total| {})
+            .await
+            .map_err(|e| ServiceError::Internal(format!("Błąd pobierania modelu: {e}")))?;
+        Ok(true)
+    }
+
     /// Bezpieczna analiza i dodanie źródła do lokalnego Evidence Ledgera.
     pub async fn ingest(&self, raw_url: &str) -> Result<IngestResponse, ServiceError> {
+        self.ingest_internal(raw_url, false).await
+    }
+
+    /// Wewnętrzna wersja ingest z możliwością wymuszenia szybkiego HeuristicClassifier (np. dla auto-badania w czacie).
+    pub async fn ingest_internal(
+        &self,
+        raw_url: &str,
+        force_heuristic: bool,
+    ) -> Result<IngestResponse, ServiceError> {
         let config = self.effective_config()?;
         let audit = AuditLog::open(expand_tilde(&config.security.audit_log))
             .map_err(|e| ServiceError::Internal(format!("cannot open audit log: {e}")))?;
 
         let fetcher =
             build_fetcher(&config, false).map_err(|e| ServiceError::Fetch(e.to_string()))?;
-        let classifier =
-            build_classifier(&config, false).map_err(|e| ServiceError::Pipeline(e.to_string()))?;
+        let classifier: Arc<dyn Classifier> = if force_heuristic {
+            Arc::new(bse_classify::HeuristicClassifier::default())
+        } else {
+            build_classifier(&config, false).map_err(|e| ServiceError::Pipeline(e.to_string()))?
+        };
 
         let pipeline = EvidencePipeline::new(
             fetcher,
@@ -415,12 +485,9 @@ impl Service {
                 (None, None) => std::cmp::Ordering::Equal,
             });
 
-            // Auto-ingest top 2 web sources do Rejestru Twierdzeń (z limitem czasu 3s na źródło)
+            // Auto-ingest top 2 web sources do Rejestru Twierdzeń (błyskawiczny HeuristicClassifier z CitationGate, bez blokowania modelu LLM)
             for src in live_sources.iter().take(2) {
-                if let Ok(Ok(ing)) =
-                    tokio::time::timeout(std::time::Duration::from_secs(3), self.ingest(&src.url))
-                        .await
-                {
+                if let Ok(ing) = self.ingest_internal(&src.url, true).await {
                     new_claims_added += ing.claims_accepted;
                 }
             }
@@ -442,26 +509,40 @@ impl Service {
 
         // 6. Jeśli skonfigurowany jest LLM, wygeneruj odpowiedź kontekstową z cytatami źródeł
         let effective_config = self.effective_config()?;
+        let is_embedded = effective_config.llm.provider == "embedded";
         if let Ok(client) = build_llm_client(&effective_config) {
             let mut context_block = String::new();
 
+            let max_src_count = if is_embedded { 3 } else { 8 };
+            let max_claims_count = if is_embedded { 2 } else { 6 };
+            let snippet_max_chars = if is_embedded { 180 } else { 400 };
+
             if !live_sources.is_empty() {
                 context_block.push_str(
-                    "\n\nAKTUALNE ŹRÓDŁA Z INTERNETU (ułożone chronologicznie od najnowszych do najstarszych, cytuj jako [1], [2] itp.):\n",
+                    "\n\nAKTUALNE ŹRÓDŁA Z INTERNETU (cytuj jako [1], [2] itp.):\n",
                 );
-                for (i, s) in live_sources.iter().enumerate() {
+                for (i, s) in live_sources.iter().take(max_src_count).enumerate() {
                     let date_str = s
                         .published
                         .as_deref()
                         .map(|d| format!(" [Data: {d}]"))
                         .unwrap_or_default();
+                    let snip = if s.snippet.len() > snippet_max_chars {
+                        let mut end = snippet_max_chars;
+                        while !s.snippet.is_char_boundary(end) && end > 0 {
+                            end -= 1;
+                        }
+                        &s.snippet[..end]
+                    } else {
+                        &s.snippet
+                    };
                     context_block.push_str(&format!(
                         "[{}] \"{}\" ({}){} - {}\nURL: {}\n\n",
                         i + 1,
                         s.title,
                         s.domain,
                         date_str,
-                        s.snippet,
+                        snip,
                         s.url
                     ));
                 }
@@ -469,7 +550,7 @@ impl Service {
 
             if !matching.is_empty() {
                 context_block.push_str("\n\nZWERYFIKOWANE TWIERDZENIA W REJESTRZE BALD:\n");
-                for c in matching.iter() {
+                for c in matching.iter().take(max_claims_count) {
                     context_block.push_str(&format!(
                         "- [{}] \"{}\" (liczba źródeł: {}, cytatów: {})\n",
                         c.kind.as_str(),
@@ -480,16 +561,20 @@ impl Service {
                 }
             }
 
-            let system = "Jesteś BALD — autonomicznym silnikiem badawczym OSINT i weryfikacji faktów (Claim, Narrative & Source Evidence Engine), działającym na poziomie Perplexity/Firecrawl.\n\
-            ZASADY ANALIZY:\n\
-            1. Każdy fakt i twierdzenie popieraj numerowanym odnośnikiem źródłowym [1], [2] itp. odnoszącym się do dostarczonych źródeł internetowych.\n\
-            2. CHRONOLOGIA: Informacje i wydarzenia w tekście oraz listę źródeł przedstawiaj w porządku chronologicznym — od najnowszych publikacji i doniesień do najstarszych źródeł i korzeni historycznych. Przy kluczowych faktach podawaj daty lub lata publikacji i zdarzeń.\n\
-            3. NIE CENZURUJ ani nie usuwaj nazwisk osób publicznych, autorów, polityków, badaczy, urzędników i sygnalistów (np. Klaus Schwab, Rob Brotherton, Edward Snowden, autorzy ustaw i raportów). Wymieniaj ich z nazwiska i roli. Zasada prywatności dotyczy tylko osób prywatnych i wrażliwych danych PII (PESEL, adresy domowe).\n\
-            4. Oddzielaj twarde fakty i dowody źródłowe od narracji, domniemań i spekulacji.\n\
-            5. Na końcu odpowiedzi ZAWSZE umieść:\n\
-               - Sekcję '### Źródła' z ponumerowaną listą linków URL uporządkowaną chronologicznie,\n\
-               - Sekcję '### Proponowane kierunki śledztwa:' zawierającą dokładnie 3 intrygujące, konkretne pytania lub wątki pogłębiające sprawę (np. konkretne podziemia, artefakty, klątwy czy dokumenty).\n\
-            6. Odpowiadaj wyczerpująco, profesjonalnie, neutralnie i w języku polskim.";
+            let system = if is_embedded {
+                "Jesteś BALD — zwięzłym, polskim silnikiem badawczym OSINT i faktów. Odpowiadaj konkretnie na pytanie, popieraj fakty odnośnikami [1], [2] ze źródeł i podsumuj w 2-3 akapitach po polsku. Na końcu wymień sekcję ### Źródła oraz 2-3 ### Proponowane kierunki śledztwa."
+            } else {
+                "Jesteś BALD — autonomicznym silnikiem badawczym OSINT i weryfikacji faktów (Claim, Narrative & Source Evidence Engine), działającym na poziomie Perplexity/Firecrawl.\n\
+                ZASADY ANALIZY:\n\
+                1. Każdy fakt i twierdzenie popieraj numerowanym odnośnikiem źródłowym [1], [2] itp. odnoszącym się do dostarczonych źródeł internetowych.\n\
+                2. CHRONOLOGIA: Informacje i wydarzenia w tekście oraz listę źródeł przedstawiaj w porządku chronologicznym — od najnowszych publikacji i doniesień do najstarszych źródeł i korzeni historycznych. Przy kluczowych faktach podawaj daty lub lata publikacji i zdarzeń.\n\
+                3. NIE CENZURUJ ani nie usuwaj nazwisk osób publicznych, autorów, polityków, badaczy, urzędników i sygnalistów (np. Klaus Schwab, Rob Brotherton, Edward Snowden, autorzy ustaw i raportów). Wymieniaj ich z nazwiska i roli. Zasada prywatności dotyczy tylko osób prywatnych i wrażliwych danych PII (PESEL, adresy domowe).\n\
+                4. Oddzielaj twarde fakty i dowody źródłowe od narracji, domniemań i spekulacji.\n\
+                5. Na końcu odpowiedzi ZAWSZE umieść:\n\
+                   - Sekcję '### Źródła' z ponumerowaną listą linków URL uporządkowaną chronologicznie,\n\
+                   - Sekcję '### Proponowane kierunki śledztwa:' zawierającą dokładnie 3 intrygujące, konkretne pytania lub wątki pogłębiające sprawę (np. konkretne podziemia, artefakty, klątwy czy dokumenty).\n\
+                6. Odpowiadaj wyczerpująco, profesjonalnie, neutralnie i w języku polskim."
+            };
 
             let prompt = format!("Pytanie / temat użytkownika: {message}{context_block}");
 
@@ -992,21 +1077,43 @@ fn classify_options(cfg: &Config) -> ClassifyOptions {
     }
 }
 
-fn build_llm_client(cfg: &Config) -> Result<LlmClient, anyhow::Error> {
+fn build_llm_client(cfg: &Config) -> Result<Arc<dyn bse_llm::Llm>, anyhow::Error> {
     let provider = cfg.llm.provider.trim().to_ascii_lowercase();
-    let llm_prov = LlmProvider::parse(&provider)
-        .ok_or_else(|| anyhow::anyhow!("unknown LLM provider: {provider}"))?;
-    let settings = LlmSettings {
-        provider: llm_prov,
-        base_url: cfg.llm.base_url.clone(),
-        model: cfg.llm.model.clone(),
-        api_key: cfg.llm.api_key(),
-        timeout: Duration::from_secs(cfg.llm.timeout_secs.max(1)),
-        connect_timeout: Duration::from_secs(cfg.llm.connect_timeout_secs.max(1)),
-        temperature: cfg.llm.temperature,
-        max_tokens: cfg.llm.max_tokens.max(64),
-    };
-    LlmClient::new(settings).map_err(|e| anyhow::anyhow!(e.to_string()))
+    match provider.as_str() {
+        "embedded" | "built-in" | "builtin" | "qwen" => {
+            let storage = bse_llm::ModelStorage::default();
+            let preset = bse_llm::ModelCatalog::find(&cfg.llm.embedded_model)
+                .unwrap_or_else(bse_llm::ModelCatalog::default_preset);
+            if storage.is_installed(&preset) {
+                let embedded = bse_llm::EmbeddedLlm::load(&storage, preset)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                    .with_max_tokens(cfg.llm.max_tokens as usize);
+                Ok(Arc::new(embedded))
+            } else {
+                Err(anyhow::anyhow!(
+                    "Wbudowany model {} nie jest jeszcze pobrany.",
+                    preset.name
+                ))
+            }
+        }
+        "ollama" | "openai" => {
+            let llm_prov = LlmProvider::parse(&provider)
+                .ok_or_else(|| anyhow::anyhow!("unknown LLM provider: {provider}"))?;
+            let settings = LlmSettings {
+                provider: llm_prov,
+                base_url: cfg.llm.base_url.clone(),
+                model: cfg.llm.model.clone(),
+                api_key: cfg.llm.api_key(),
+                timeout: Duration::from_secs(cfg.llm.timeout_secs.max(1)),
+                connect_timeout: Duration::from_secs(cfg.llm.connect_timeout_secs.max(1)),
+                temperature: cfg.llm.temperature,
+                max_tokens: cfg.llm.max_tokens.max(64),
+            };
+            let client = LlmClient::new(settings).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Arc::new(client))
+        }
+        other => Err(anyhow::anyhow!("unknown LLM provider: {other}")),
+    }
 }
 
 fn classifier_backend(
@@ -1019,6 +1126,21 @@ fn classifier_backend(
     let provider = provider.trim().to_ascii_lowercase();
     match provider.as_str() {
         "none" | "heuristic" => Ok(Arc::new(HeuristicClassifier::new(classify_options(cfg)))),
+        "embedded" | "built-in" | "builtin" | "qwen" => {
+            let storage = bse_llm::ModelStorage::default();
+            let preset = bse_llm::ModelCatalog::find(&cfg.llm.embedded_model)
+                .unwrap_or_else(bse_llm::ModelCatalog::default_preset);
+            if storage.is_installed(&preset) {
+                let embedded = bse_llm::EmbeddedLlm::load(&storage, preset)
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                Ok(Arc::new(LlmClassifier::new(
+                    Arc::new(embedded),
+                    classify_options(cfg),
+                )))
+            } else {
+                Ok(Arc::new(HeuristicClassifier::new(classify_options(cfg))))
+            }
+        }
         "ollama" | "openai" => {
             let provider = LlmProvider::parse(&provider)
                 .ok_or_else(|| anyhow::anyhow!("unknown LLM provider: {provider}"))?;

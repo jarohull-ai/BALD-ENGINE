@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
+  Box,
   Check,
   Cloud,
   Cpu,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
@@ -21,10 +23,10 @@ import {
   Trash2,
   Wifi,
 } from 'lucide-react';
-import { discoverModels, fetchSettings, saveSettings } from '../api';
+import { discoverModels, downloadEmbeddedModel, fetchEmbeddedModels, fetchSettings, saveSettings } from '../api';
 import { useI18n } from '../i18n';
 import { cn } from '../lib';
-import type { DiscoveredEngine, SettingsUpdate, SettingsView } from '../types';
+import type { DiscoveredEngine, EmbeddedModelStatusItem, SettingsUpdate, SettingsView } from '../types';
 import {
   Badge,
   CardShell,
@@ -48,6 +50,7 @@ interface Draft {
   llmProvider: string;
   llmBaseUrl: string;
   llmModel: string;
+  embeddedModel: string;
   llmApiKeyEnv: string;
   fallbackProvider: string;
   fallbackBaseUrl: string;
@@ -88,6 +91,7 @@ function buildDraft(view: SettingsView): Draft {
     llmProvider: view.llm.provider,
     llmBaseUrl: view.llm.baseUrl,
     llmModel: view.llm.model,
+    embeddedModel: view.llm.embeddedModel || 'qwen2.5-0.5b-instruct',
     llmApiKeyEnv: view.llm.apiKeyEnv,
     fallbackProvider: view.llm.fallbackProvider,
     fallbackBaseUrl: view.llm.fallbackBaseUrl,
@@ -116,6 +120,7 @@ function toUpdate(draft: Draft, secrets: Secrets, clears: Clears): SettingsUpdat
     llmProvider: draft.llmProvider,
     llmBaseUrl: draft.llmBaseUrl,
     llmModel: draft.llmModel,
+    embeddedModel: draft.embeddedModel,
     llmApiKeyEnv: draft.llmApiKeyEnv,
     llmApiKey: secrets.llm.trim() || undefined,
     clearLlmApiKey: clears.llm || undefined,
@@ -314,6 +319,39 @@ export function SettingsView() {
   const [discovering, setDiscovering] = useState(false);
   const [discoveryScanned, setDiscoveryScanned] = useState(false);
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+  const [embeddedModels, setEmbeddedModels] = useState<EmbeddedModelStatusItem[]>([]);
+  const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const loadEmbedded = useCallback(async () => {
+    try {
+      const resp = await fetchEmbeddedModels();
+      setEmbeddedModels(resp.models);
+    } catch {
+      setEmbeddedModels([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadEmbedded();
+  }, [loadEmbedded]);
+
+  async function handleDownloadEmbedded(modelId: string) {
+    setDownloadingModelId(modelId);
+    setDownloadError(null);
+    try {
+      await downloadEmbeddedModel(modelId);
+      await loadEmbedded();
+      update('llmProvider', 'embedded');
+      update('embeddedModel', modelId);
+      setSelectionNotice(t('settings.selectedModel', { model: modelId }));
+      window.setTimeout(() => setSelectionNotice(null), 3500);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloadingModelId(null);
+    }
+  }
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
@@ -378,9 +416,21 @@ export function SettingsView() {
     setSecrets((current) => ({ ...current, [key]: '' }));
   }
 
-  function applyPreset(preset: 'local' | 'cloud' | 'rules') {
+  function applyPreset(preset: 'embedded' | 'local' | 'cloud' | 'rules') {
     setDraft((current) => {
       if (!current) return current;
+      if (preset === 'embedded') {
+        return {
+          ...current,
+          searxngEnabled: true,
+          searxngBaseUrl: 'http://127.0.0.1:8080',
+          searxngLanguage: '',
+          braveEnabled: false,
+          llmProvider: 'embedded',
+          embeddedModel: 'qwen2.5-0.5b-instruct',
+          fallbackProvider: 'heuristic',
+        };
+      }
       if (preset === 'local') {
         return {
           ...current,
@@ -464,7 +514,8 @@ export function SettingsView() {
     );
   }
 
-  const primaryNeedsEndpoint = draft.llmProvider !== 'none';
+  const primaryNeedsEndpoint =
+    draft.llmProvider === 'ollama' || draft.llmProvider === 'openai';
   const fallbackNeedsEndpoint = draft.fallbackProvider === 'ollama' || draft.fallbackProvider === 'openai';
 
   return (
@@ -502,7 +553,13 @@ export function SettingsView() {
             {t('settings.presets')}
           </span>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          <PresetCard
+            icon={<Box className="h-3.5 w-3.5 text-amber-300" />}
+            title={t('settings.preset.embedded')}
+            body={t('settings.preset.embeddedBody')}
+            onClick={() => applyPreset('embedded')}
+          />
           <PresetCard
             icon={<Laptop className="h-3.5 w-3.5 text-emerald-300/80" />}
             title={t('settings.preset.local')}
@@ -670,16 +727,150 @@ export function SettingsView() {
           title={t('settings.llm')}
           body={t('settings.llmBody')}
           action={
-            <Badge tone={draft.llmProvider === 'ollama' ? 'emerald' : 'neutral'}>
+            <Badge
+              tone={
+                draft.llmProvider === 'embedded'
+                  ? 'amber'
+                  : draft.llmProvider === 'ollama'
+                    ? 'emerald'
+                    : 'neutral'
+              }
+            >
               <Bot className="h-3 w-3" />
-              {draft.llmProvider === 'ollama'
-                ? t('settings.ollama')
-                : draft.llmProvider === 'openai'
-                  ? t('settings.openai')
-                  : t('settings.none')}
+              {draft.llmProvider === 'embedded'
+                ? t('settings.embedded')
+                : draft.llmProvider === 'ollama'
+                  ? t('settings.ollama')
+                  : draft.llmProvider === 'openai'
+                    ? t('settings.openai')
+                    : t('settings.none')}
             </Badge>
           }
         />
+
+        {/* Wbudowany silnik AI (Candle / Rust - Zero setup) */}
+        <div className="mt-6 rounded-2xl border border-amber-400/25 bg-amber-400/[0.04] p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-xl border border-amber-400/30 bg-amber-400/15 text-amber-300">
+                <Box className="h-4 w-4" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">
+                    {t('settings.embeddedEngineTitle')}
+                  </h3>
+                  <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300 border border-amber-400/25">
+                    Zero Setup · Pure Rust
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {t('settings.embeddedEngineSubtitle')}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void loadEmbedded()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] font-medium text-slate-300 transition hover:bg-white/[0.06]"
+            >
+              <RefreshCw className="h-3 w-3 text-slate-400" />
+              {t('settings.reload')}
+            </button>
+          </div>
+
+          {downloadError && (
+            <div className="mt-3 rounded-lg border border-rose-400/20 bg-rose-400/10 p-2.5 text-xs text-rose-300">
+              <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" />
+              {downloadError}
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {embeddedModels.map((m) => {
+              const isSelected = draft.llmProvider === 'embedded' && draft.embeddedModel === m.id;
+              const isDownloading = downloadingModelId === m.id;
+              const sizeMb = Math.round(m.size_bytes / (1024 * 1024));
+
+              return (
+                <div
+                  key={m.id}
+                  className={cn(
+                    'relative rounded-xl border p-4 transition',
+                    isSelected
+                      ? 'border-amber-400/50 bg-amber-400/[0.08] shadow-sm'
+                      : 'border-white/[0.08] bg-black/20 hover:border-white/15'
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-100">{m.name}</span>
+                        {m.installed ? (
+                          <span className="inline-flex items-center gap-1 rounded border border-emerald-400/20 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                            <Check className="h-2.5 w-2.5" />
+                            {t('settings.embeddedInstalled')}
+                          </span>
+                        ) : (
+                          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-slate-400">
+                            ~{sizeMb} MB
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{m.description}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-2">
+                    <span className="font-mono text-[10px] text-slate-500">ID: {m.id}</span>
+
+                    {m.installed ? (
+                      isSelected ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-200">
+                          <Check className="h-3 w-3" />
+                          {t('settings.embeddedActive')}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            update('llmProvider', 'embedded');
+                            update('embeddedModel', m.id);
+                            setSelectionNotice(t('settings.selectedModel', { model: m.name }));
+                            window.setTimeout(() => setSelectionNotice(null), 3500);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-amber-400/40 hover:bg-amber-400/10 hover:text-amber-200"
+                        >
+                          {t('settings.embeddedActivate')}
+                        </button>
+                      )
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleDownloadEmbedded(m.id)}
+                        disabled={isDownloading || Boolean(downloadingModelId)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-400/15 px-3 py-1 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/25 disabled:opacity-50"
+                      >
+                        {isDownloading ? (
+                          <>
+                            <Spinner />
+                            <span>Pobieranie (~{sizeMb} MB)…</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3 w-3" />
+                            <span>{t('settings.embeddedDownload')} ({sizeMb} MB)</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Auto-Discovery of Local AI Engines */}
         <div className="mt-6 rounded-2xl border border-white/[0.08] bg-black/25 p-4 sm:p-5">
@@ -808,24 +999,49 @@ export function SettingsView() {
                     onChange={(event) => update('llmProvider', event.target.value)}
                     className={selectClass}
                   >
+                    <option value="embedded">{t('settings.embedded')}</option>
                     <option value="ollama">{t('settings.ollama')}</option>
                     <option value="openai">{t('settings.openai')}</option>
                     <option value="none">{t('settings.none')}</option>
                   </select>
                 </Field>
-                <Field label={t('settings.model')}>
-                  <input
-                    value={draft.llmModel}
-                    onChange={(event) => update('llmModel', event.target.value)}
-                    disabled={!primaryNeedsEndpoint}
-                    spellCheck={false}
-                    className={cn(inputClass, 'font-mono text-xs')}
-                  />
-                </Field>
+                {draft.llmProvider === 'embedded' ? (
+                  <Field label="Wbudowany model">
+                    <select
+                      value={draft.embeddedModel}
+                      onChange={(event) => update('embeddedModel', event.target.value)}
+                      className={selectClass}
+                    >
+                      {embeddedModels.length > 0 ? (
+                        embeddedModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} {m.installed ? '(Zainstalowany)' : '(Wymaga pobrania)'}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="qwen2.5-0.5b-instruct">Qwen 2.5 0.5B Instruct</option>
+                      )}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label={t('settings.model')}>
+                    <input
+                      value={draft.llmModel}
+                      onChange={(event) => update('llmModel', event.target.value)}
+                      disabled={!primaryNeedsEndpoint}
+                      spellCheck={false}
+                      className={cn(inputClass, 'font-mono text-xs')}
+                    />
+                  </Field>
+                )}
               </div>
               <Field label={t('settings.baseUrl')}>
                 <input
-                  value={draft.llmBaseUrl}
+                  value={
+                    draft.llmProvider === 'embedded'
+                      ? 'Lokalny runtime Rust (Candle in-process)'
+                      : draft.llmBaseUrl
+                  }
                   onChange={(event) => update('llmBaseUrl', event.target.value)}
                   disabled={!primaryNeedsEndpoint}
                   spellCheck={false}

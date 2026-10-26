@@ -98,6 +98,8 @@ export interface LlmSettingsView {
   fallbackProvider: string;
   baseUrl: string;
   model: string;
+  embeddedModel: string;
+  embeddedInstalled: boolean;
   apiKeyEnv: string;
   apiKeyConfigured: boolean;
   apiKeySource: string;
@@ -137,6 +139,7 @@ export interface SettingsUpdate {
   llmProvider?: string;
   llmBaseUrl?: string;
   llmModel?: string;
+  embeddedModel?: string;
   llmApiKeyEnv?: string;
   llmApiKey?: string;
   clearLlmApiKey?: boolean;
@@ -166,6 +169,21 @@ export interface DiscoveredEngine {
 
 export interface DiscoveryResponse {
   engines: DiscoveredEngine[];
+}
+
+export interface EmbeddedModelStatusItem {
+  id: string;
+  name: string;
+  description: string;
+  size_bytes: number;
+  installed: boolean;
+  is_current: boolean;
+}
+
+export interface EmbeddedModelsResponse {
+  active_provider: string;
+  current_model_id: string;
+  models: EmbeddedModelStatusItem[];
 }
 
 export interface AcceptedClaimInfo {

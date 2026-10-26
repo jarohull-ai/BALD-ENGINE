@@ -160,6 +160,8 @@ fn router(state: AppState) -> Router {
         .route("/stats", get(stats))
         .route("/settings", get(settings_get).put(settings_put))
         .route("/models/discover", get(models_discover))
+        .route("/models/embedded", get(embedded_models_get))
+        .route("/models/embedded/download", axum::routing::post(embedded_models_download))
         .route("/chat", axum::routing::post(chat_post))
         .route("/evidence/ingest", axum::routing::post(ingest_post))
         .route("/search", get(search_get).post(search_post))
@@ -230,6 +232,33 @@ async fn settings_put(
 
 async fn models_discover() -> Json<DiscoveryResponse> {
     Json(discover_local_engines().await)
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadModelPayload {
+    model_id: String,
+}
+
+async fn embedded_models_get(
+    State(state): State<AppState>,
+) -> Result<Json<crate::service::EmbeddedModelsResponse>, ApiError> {
+    state
+        .service
+        .list_embedded_models()
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+async fn embedded_models_download(
+    State(state): State<AppState>,
+    Json(payload): Json<DownloadModelPayload>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let success = state
+        .service
+        .download_embedded_model(&payload.model_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({ "success": success })))
 }
 
 #[derive(Debug, Deserialize)]

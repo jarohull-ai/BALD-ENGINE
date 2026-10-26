@@ -14,11 +14,15 @@ use reqwest::Url;
 use serde_json::{json, Value};
 use thiserror::Error;
 
+pub mod embedded;
+pub use embedded::{default_models_dir, EmbeddedLlm, ModelCatalog, ModelPreset, ModelStorage};
+
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ERROR_CHARS: usize = 400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmProvider {
+    Embedded,
     Ollama,
     OpenAi,
 }
@@ -26,6 +30,7 @@ pub enum LlmProvider {
 impl LlmProvider {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "embedded" | "built-in" | "builtin" | "qwen" => Some(LlmProvider::Embedded),
             "ollama" | "local" => Some(LlmProvider::Ollama),
             "openai" | "openai-compatible" | "openai_compatible" | "api" => {
                 Some(LlmProvider::OpenAi)
@@ -36,6 +41,7 @@ impl LlmProvider {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            LlmProvider::Embedded => "embedded",
             LlmProvider::Ollama => "ollama",
             LlmProvider::OpenAi => "openai",
         }
@@ -94,6 +100,12 @@ pub enum LlmError {
 
     #[error("LLM response exceeds {0} bytes")]
     TooLarge(usize),
+
+    #[error("embedded model error: {0}")]
+    Embedded(String),
+
+    #[error("model not found: {0}")]
+    ModelNotInstalled(String),
 }
 
 impl LlmError {
@@ -108,6 +120,8 @@ impl LlmError {
             LlmError::Decode(_) => "decode",
             LlmError::Empty => "empty",
             LlmError::TooLarge(_) => "too_large",
+            LlmError::Embedded(_) => "embedded",
+            LlmError::ModelNotInstalled(_) => "model_not_installed",
         }
     }
 }
@@ -195,6 +209,11 @@ impl Llm for LlmClient {
         ]);
 
         let mut body = match self.settings.provider {
+            LlmProvider::Embedded => {
+                return Err(LlmError::Config(
+                    "LlmClient handles HTTP endpoints; use EmbeddedLlm for embedded models".to_string(),
+                ));
+            }
             LlmProvider::Ollama => json!({
                 "model": self.settings.model,
                 "messages": messages,
@@ -233,6 +252,7 @@ impl Llm for LlmClient {
         };
 
         let content = match self.settings.provider {
+            LlmProvider::Embedded => String::new(),
             LlmProvider::Ollama => parse_ollama_content(&text)?,
             LlmProvider::OpenAi => parse_openai_content(&text)?,
         };
@@ -254,6 +274,11 @@ impl Llm for LlmClient {
         ]);
 
         let body = match self.settings.provider {
+            LlmProvider::Embedded => {
+                return Err(LlmError::Config(
+                    "LlmClient handles HTTP endpoints; use EmbeddedLlm for embedded models".to_string(),
+                ));
+            }
             LlmProvider::Ollama => json!({
                 "model": self.settings.model,
                 "messages": messages,
@@ -273,6 +298,7 @@ impl Llm for LlmClient {
 
         let text = self.send(&body).await?;
         let content = match self.settings.provider {
+            LlmProvider::Embedded => String::new(),
             LlmProvider::Ollama => parse_ollama_content(&text)?,
             LlmProvider::OpenAi => parse_openai_content(&text)?,
         };
@@ -284,6 +310,9 @@ impl Llm for LlmClient {
 }
 
 fn validate_settings(settings: &LlmSettings) -> Result<(), LlmError> {
+    if settings.provider == LlmProvider::Embedded {
+        return Ok(());
+    }
     if settings.model.trim().is_empty() {
         return Err(LlmError::Config("model is empty".to_string()));
     }
@@ -329,6 +358,7 @@ fn validate_settings(settings: &LlmSettings) -> Result<(), LlmError> {
 fn endpoint_for(provider: LlmProvider, base_url: &str) -> String {
     let base = base_url.trim().trim_end_matches('/');
     match provider {
+        LlmProvider::Embedded => "embedded://local".to_string(),
         LlmProvider::Ollama => {
             if base.ends_with("/api/chat") {
                 base.to_string()
