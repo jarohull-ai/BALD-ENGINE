@@ -102,7 +102,7 @@ Download ready-to-run signed installers from the official [GitHub Releases](http
 
 Install with the Rust toolchain directly from GitHub:
 ```bash
-cargo install --git https://github.com/jarohull-ai/BALD-ENGINE bse-cli
+cargo install --git https://github.com/jarohull-ai/BALD-ENGINE bald-engine
 ```
 Or via crates.io:
 ```bash
